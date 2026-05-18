@@ -47,3 +47,6 @@ DEPLOY_SECRETS.txt
 
 # legacy salary-system migrations parked locally
 supabase/migrations.legacy/
+
+.vercel
+.env*.local
