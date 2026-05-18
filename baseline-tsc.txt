@@ -1,0 +1,75 @@
+﻿src/app/actions/importLegacyTransactions.ts(239,7): error TS2353: Object literal may only specify known properties, and 'isFreelance' does not exist in type 'CommissionInput'.
+src/app/actions/writeTransaction.test.ts(415,7): error TS2353: Object literal may only specify known properties, and 'isFreelance' does not exist in type 'CommissionInput'.
+src/app/actions/writeTransaction.test.ts(420,23): error TS2339: Property 'commission' does not exist on type 'PersistedTransactionRow'.
+src/app/actions/writeTransaction.test.ts(422,23): error TS2339: Property 'revision' does not exist on type 'PersistedTransactionRow'.
+src/app/actions/writeTransaction.test.ts(534,22): error TS2339: Property 'revision' does not exist on type 'PersistedTransactionRow'.
+src/app/actions/writeTransaction.test.ts(535,23): error TS2339: Property 'revision' does not exist on type 'PersistedTransactionRow'.
+src/app/actions/writeTransaction.test.ts(556,22): error TS2339: Property 'revision' does not exist on type 'PersistedTransactionRow'.
+src/app/actions/writeTransaction.test.ts(557,23): error TS2339: Property 'revision' does not exist on type 'PersistedTransactionRow'.
+src/app/actions/writeTransaction.test.ts(618,23): error TS2339: Property 'commission' does not exist on type 'PersistedTransactionRow'.
+src/app/actions/writeTransaction.test.ts(619,23): error TS2339: Property 'commissionOverride' does not exist on type 'PersistedTransactionRow'.
+src/app/actions/writeTransaction.test.ts(649,7): error TS2353: Object literal may only specify known properties, and 'isFreelance' does not exist in type 'CommissionInput'.
+src/app/actions/writeTransaction.test.ts(654,23): error TS2339: Property 'commission' does not exist on type 'PersistedTransactionRow'.
+src/app/actions/writeTransaction.test.ts(655,23): error TS2339: Property 'commissionOverride' does not exist on type 'PersistedTransactionRow'.
+src/app/actions/writeTransaction.test.ts(703,22): error TS2339: Property 'revision' does not exist on type 'PersistedTransactionRow'.
+src/app/actions/writeTransaction.test.ts(704,23): error TS2339: Property 'revision' does not exist on type 'PersistedTransactionRow'.
+src/app/actions/writeTransaction.test.ts(705,23): error TS2339: Property 'commission' does not exist on type 'PersistedTransactionRow'.
+src/app/actions/writeTransaction.test.ts(706,23): error TS2339: Property 'commissionOverride' does not exist on type 'PersistedTransactionRow'.
+src/app/cashier/[branch]/EditRowDialog.tsx(36,8): error TS2305: Module '"@/domain/commission"' has no exported member 'Method'.
+src/app/cashier/[branch]/EditRowDialog.tsx(157,9): error TS2353: Object literal may only specify known properties, and 'isFreelance' does not exist in type 'CommissionInput'.
+src/app/cashier/[branch]/InlineEditCell.tsx(53,15): error TS2305: Module '"@/domain/commission"' has no exported member 'Method'.
+src/app/cashier/[branch]/panels/EarningsPanel.tsx(33,3): error TS2305: Module '"@/domain/salary-board"' has no exported member 'buildPerBranchView'.
+src/app/cashier/[branch]/panels/EarningsPanel.tsx(34,8): error TS2459: Module '"@/domain/salary-board"' declares 'TransactionRow' locally, but it is not exported.
+src/app/cashier/[branch]/panels/EarningsPanel.tsx(37,33): error TS2305: Module '"@/domain/commission"' has no exported member 'Method'.
+src/app/cashier/[branch]/panels/EarningsPanel.tsx(203,16): error TS18046: 'cell' is of type 'unknown'.
+src/app/cashier/[branch]/PendingSyncBadge.tsx(31,3): error TS2305: Module '"@/lib/offline-queue"' has no exported member 'listPending'.
+src/app/cashier/[branch]/PendingSyncBadge.tsx(32,3): error TS2305: Module '"@/lib/offline-queue"' has no exported member 'pendingCount'.
+src/app/cashier/[branch]/PendingSyncBadge.tsx(33,3): error TS2305: Module '"@/lib/offline-queue"' has no exported member 'recordFailure'.
+src/app/cashier/[branch]/SessionForm.tsx(39,8): error TS2305: Module '"@/domain/commission"' has no exported member 'Method'.
+src/app/cashier/[branch]/SessionForm.tsx(214,9): error TS2353: Object literal may only specify known properties, and 'isFreelance' does not exist in type 'CommissionInput'.
+src/app/cashier/[branch]/SessionForm.tsx(394,28): error TS2554: Expected 1 arguments, but got 2.
+src/app/cashier/[branch]/SessionTable.tsx(24,8): error TS2305: Module '"@/domain/commission"' has no exported member 'Method'.
+src/app/cashier/[branch]/SessionTable.tsx(479,15): error TS2353: Object literal may only specify known properties, and 'isFreelance' does not exist in type 'CommissionInput'.
+src/app/cashier/[branch]/SessionTable.tsx(708,19): error TS2353: Object literal may only specify known properties, and 'isFreelance' does not exist in type 'CommissionInput'.
+src/app/cashier/[branch]/SessionTable.tsx(874,17): error TS2353: Object literal may only specify known properties, and 'isFreelance' does not exist in type 'CommissionInput'.
+src/app/cashier/[branch]/SessionTable.tsx(926,17): error TS2353: Object literal may only specify known properties, and 'isFreelance' does not exist in type 'CommissionInput'.
+src/app/cashier/[branch]/SessionTable.tsx(1027,17): error TS2353: Object literal may only specify known properties, and 'isFreelance' does not exist in type 'CommissionInput'.
+src/app/cashier/[branch]/TodaySessions.tsx(65,33): error TS2305: Module '"@/domain/commission"' has no exported member 'Method'.
+src/app/owner/diagnostics/commissionOverrides.ts(119,7): error TS2353: Object literal may only specify known properties, and 'isFreelance' does not exist in type 'CommissionInput'.
+src/app/owner/salary/page.tsx(35,8): error TS2305: Module '"@/domain/salary-board"' has no exported member 'SalaryRow'.
+src/app/owner/salary/page.tsx(36,8): error TS2305: Module '"@/domain/salary-board"' has no exported member 'Staff'.
+src/app/owner/salary/page.tsx(37,8): error TS2459: Module '"@/domain/salary-board"' declares 'TransactionRow' locally, but it is not exported.
+src/app/owner/salary/page.tsx(40,33): error TS2305: Module '"@/domain/commission"' has no exported member 'Method'.
+src/app/owner/salary/page.tsx(328,11): error TS2322: Type 'BoardSection | undefined' is not assignable to type 'SalaryRow[]'.
+  Type 'undefined' is not assignable to type 'SalaryRow[]'.
+src/app/owner/salary/page.tsx(334,27): error TS2740: Type 'BoardSection' is missing the following properties from type 'SalaryRow[]': length, pop, push, concat, and 35 more.
+src/app/owner/settings/freelance-rates/FreelanceRatesGrid.tsx(93,24): error TS2339: Property 'branch' does not exist on type 'FreelanceRateRow'.
+src/app/owner/settings/freelance-rates/FreelanceRatesGrid.tsx(96,26): error TS2339: Property 'rate' does not exist on type 'FreelanceRateRow'.
+src/app/owner/settings/freelance-rates/FreelanceRatesGrid.tsx(150,61): error TS2339: Property 'rate' does not exist on type 'PersistedFreelanceRate'.
+src/app/owner/settings/freelance-rates/page.test.tsx(61,33): error TS2353: Object literal may only specify known properties, and 'rate' does not exist in type 'FreelanceRateRow'.
+src/app/owner/settings/freelance-rates/page.test.tsx(62,33): error TS2353: Object literal may only specify known properties, and 'rate' does not exist in type 'FreelanceRateRow'.
+src/app/owner/settings/freelance-rates/page.test.tsx(63,33): error TS2353: Object literal may only specify known properties, and 'rate' does not exist in type 'FreelanceRateRow'.
+src/app/owner/settings/freelance-rates/page.test.tsx(64,34): error TS2353: Object literal may only specify known properties, and 'rate' does not exist in type 'FreelanceRateRow'.
+src/app/owner/settings/freelance-rates/page.test.tsx(65,33): error TS2353: Object literal may only specify known properties, and 'rate' does not exist in type 'FreelanceRateRow'.
+src/app/owner/settings/freelance-rates/page.test.tsx(66,33): error TS2353: Object literal may only specify known properties, and 'rate' does not exist in type 'FreelanceRateRow'.
+src/app/owner/settings/freelance-rates/page.test.tsx(67,34): error TS2353: Object literal may only specify known properties, and 'rate' does not exist in type 'FreelanceRateRow'.
+src/app/owner/settings/freelance-rates/page.tsx(45,9): error TS2322: Type '{ course: "FR" | "HS" | "FNS" | "BMT" | "BAT" | "DTM" | "THC" | "HOM" | "PBA" | "PBAC" | "EAR" | "PTF" | "PAF" | "PHL" | "PHT"; duration: 60 | 30 | 90 | 120; rate: number; branch: string | undefined; }[]' is not assignable to type 'FreelanceRateRow[]'.
+  Type '{ course: "FR" | "HS" | "FNS" | "BMT" | "BAT" | "DTM" | "THC" | "HOM" | "PBA" | "PBAC" | "EAR" | "PTF" | "PAF" | "PHL" | "PHT"; duration: 60 | 30 | 90 | 120; rate: number; branch: string | undefined; }' is missing the following properties from type 'FreelanceRateRow': branchGroup, amount, effectiveFrom
+src/app/owner/settings/staff-rates/StaffRatesGrid.tsx(93,53): error TS2339: Property 'rate' does not exist on type 'PersistedCommissionRate'.
+src/app/owner/time-machine/page.tsx(30,3): error TS2459: Module '"@/domain/salary-board"' declares 'TransactionRow' locally, but it is not exported.
+src/app/owner/time-machine/page.tsx(33,33): error TS2305: Module '"@/domain/commission"' has no exported member 'Method'.
+src/domain/daily-ledger.test.ts(31,15): error TS2459: Module '"./salary-board"' declares 'TransactionRow' locally, but it is not exported.
+src/domain/daily-ledger.ts(36,15): error TS2459: Module '"./salary-board"' declares 'TransactionRow' locally, but it is not exported.
+src/domain/pill-colors.ts(31,33): error TS2305: Module '"./commission"' has no exported member 'Method'.
+src/lib/theming.ts(28,33): error TS2305: Module '"@/domain/commission"' has no exported member 'Method'.
+src/migration/cli.ts(188,7): error TS2353: Object literal may only specify known properties, and 'isFreelance' does not exist in type 'CommissionInput'.
+src/migration/legacyRowToTransaction.ts(40,33): error TS2305: Module '"@/domain/commission"' has no exported member 'Method'.
+tests/integration/may15-regression.test.ts(33,3): error TS2305: Module '"@/domain/salary-board"' has no exported member 'buildPerBranchView'.
+tests/integration/may15-regression.test.ts(36,8): error TS2459: Module '"@/domain/salary-board"' declares 'TransactionRow' locally, but it is not exported.
+tests/integration/may15-regression.test.ts(37,8): error TS2305: Module '"@/domain/salary-board"' has no exported member 'Staff'.
+tests/integration/may15-regression.test.ts(217,36): error TS18048: 'kim' is possibly 'undefined'.
+tests/integration/may15-regression.test.ts(217,40): error TS2339: Property 'find' does not exist on type 'BoardSection'.
+tests/integration/may15-regression.test.ts(217,46): error TS7006: Parameter 'r' implicitly has an 'any' type.
+tests/integration/migration.test.ts(176,7): error TS2353: Object literal may only specify known properties, and 'isFreelance' does not exist in type 'CommissionInput'.
+tests/integration/performance.test.ts(29,8): error TS2459: Module '"@/domain/salary-board"' declares 'TransactionRow' locally, but it is not exported.
+tests/integration/performance.test.ts(30,8): error TS2305: Module '"@/domain/salary-board"' has no exported member 'Staff'.

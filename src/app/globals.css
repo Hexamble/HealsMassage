@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Theme model:
+ *
+ *   - Default (no class on <html>) → light mode. CSS vars use the
+ *     light palette.
+ *   - <html class="dark">          → dark mode. CSS vars switch to
+ *     the dark palette. Tailwind `dark:` utilities also activate.
+ *
+ * The class-based switch is driven by:
+ *   1. The blocking inline script in `app/layout.tsx` (first paint),
+ *   2. The `<ThemeToggle />` component (subsequent client toggles),
+ *   3. The server-side `setTheme` action (durable preference).
+ *
+ * We do NOT use `prefers-color-scheme` to flip these vars: the inline
+ * script already converts the OS preference to a class, so a single
+ * source of truth (the class on <html>) avoids fighting with Tailwind's
+ * `darkMode: 'class'` strategy.
+ */
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+html.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/*
+ * Branch theming (Req 19.1–19.4).
+ *
+ * Each `.theme-{branch}` class binds the three CSS custom properties
+ * consumed by Tailwind arbitrary-value utilities such as
+ * `bg-[var(--theme-primary)]`, `text-[var(--theme-primary-foreground)]`,
+ * and `border-[var(--theme-accent)]`. Apply the class on the cashier
+ * `[branch]` layout root (or `<body>`) so descendants inherit the
+ * variables.
+ *
+ * Hex values mirror `c:/BILL/app/src/lib/theming.ts` and
+ * `c:/BILL/app/scripts/seed-settings.ts` so the build-time CSS, the
+ * runtime TS map, and the owner-editable `settings.branch_themes` row
+ * all agree.
+ *
+ * `.theme-default` is the safe fallback (Req 19.4): a neutral slate
+ * palette used when the branch cannot be determined or theme lookup
+ * fails partway through. The cashier layout still renders with usable
+ * contrast even when the branch-specific theme cannot be resolved.
+ */
+.theme-kimberry {
+  --theme-primary: #0d9488; /* teal-600 */
+  --theme-accent: #14b8a6;  /* teal-500 */
+  --theme-primary-foreground: #ffffff;
+}
+
+.theme-bishop {
+  --theme-primary: #d97706; /* amber-600 */
+  --theme-accent: #f59e0b;  /* amber-500 */
+  --theme-primary-foreground: #ffffff;
+}
+
+.theme-chulia {
+  --theme-primary: #f43f5e; /* rose-500 */
+  --theme-accent: #fb7185;  /* rose-400 */
+  --theme-primary-foreground: #ffffff;
+}
+
+.theme-default {
+  --theme-primary: #475569; /* slate-600 */
+  --theme-accent: #94a3b8;  /* slate-400 */
+  --theme-primary-foreground: #ffffff;
+}

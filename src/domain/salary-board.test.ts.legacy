@@ -1,0 +1,800 @@
+/**
+ * Unit + property tests for `salary-board.ts`.
+ *
+ * Includes the May 15, 2026 gold-standard regression — the most important
+ * test in the rebuild. The dataset mirrors `tests/salaryExtraFallback.test.js`
+ * exactly; the per-staff cycle totals (Beer 111, Ney 96, Nana 89, Lin 84,
+ * Nan 80, Pra 54, Yui 23) are the contract that the canonical EXTRA
+ * fallback rule must reproduce.
+ *
+ * Validates:
+ *   - Requirements 9.1, 9.2, 9.3, 9.4, 9.5, 9.6
+ *   - Requirements 19.3, 19.4, 19.5
+ *   - Requirements 22.1, 22.2, 22.3
+ *   - Property 5 (Canonical view never double-counts)
+ *   - Property 6 (Canonical fallback credits destination)
+ *   - Property 7 (Coverage cancels EXTRA)
+ *   - Property 8 (Per-branch view matches cashier panel)
+ *   - Property 9 (Two-view reconciliation per cycle, no-EXTRA case)
+ *
+ * Source-of-truth:
+ *   - tests/salaryExtraFallback.test.js (legacy, JS) — May 15 regression
+ *   - .kiro/specs/salary-system-rebuild/design.md §"buildCanonicalView"
+ *   - SYSTEM_SPEC.md §10 (EXTRA branch-lending rules)
+ */
+
+import fc from 'fast-check';
+import {
+  buildPerBranchView,
+  buildCanonicalView,
+  buildSalaryBoard,
+  type TransactionRow,
+  type Staff,
+} from './salary-board';
+import {
+  decodeExtraDestination,
+  buildExtraMatchKey,
+  isExtraMethod,
+} from './extra';
+import { cycleDates } from './cycle';
+import { lookupStaffRate, type Course, type Duration } from './commission';
+import type { Branch } from './row-id';
+
+// ---------------------------------------------------------------------------
+// Test helpers — factory for TransactionRow with sensible defaults
+// ---------------------------------------------------------------------------
+
+interface RowSpec {
+  rowId: string;
+  branch: Branch;
+  businessDate: string;
+  rowNum: number;
+  staff: string;
+  course: Course;
+  duration: Duration;
+  timeIn?: string | null;
+  timeOut?: string | null;
+  method: string;
+  price?: number;
+  cash?: number;
+  qr?: number;
+  credit?: number;
+  commission: number;
+}
+
+function row(spec: RowSpec): TransactionRow {
+  return {
+    rowId: spec.rowId,
+    branch: spec.branch,
+    businessDate: spec.businessDate,
+    rowNum: spec.rowNum,
+    staff: spec.staff,
+    course: spec.course,
+    duration: spec.duration,
+    timeIn: spec.timeIn ?? null,
+    timeOut: spec.timeOut ?? null,
+    addon: 0,
+    commission: spec.commission,
+    method: spec.method,
+    cash: spec.cash ?? 0,
+    qr: spec.qr ?? 0,
+    credit: spec.credit ?? 0,
+    price: spec.price ?? 0,
+    note: '',
+    revision: 1,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// May 15, 2026 fixture — port from tests/salaryExtraFallback.test.js
+// ---------------------------------------------------------------------------
+
+const MAY15 = '2026-05-15';
+
+let __rowSeq = 0;
+const nextSeq = () => ++__rowSeq;
+
+function kim(
+  spec: Omit<RowSpec, 'rowId' | 'branch' | 'rowNum' | 'businessDate'>,
+): TransactionRow {
+  const rowNum = nextSeq();
+  return row({
+    rowId: `Kimberry|${MAY15}|${rowNum}`,
+    branch: 'Kimberry',
+    businessDate: MAY15,
+    rowNum,
+    ...spec,
+  });
+}
+
+function bishop(
+  spec: Omit<RowSpec, 'rowId' | 'branch' | 'rowNum' | 'businessDate'>,
+): TransactionRow {
+  const rowNum = nextSeq();
+  return row({
+    rowId: `Bishop|${MAY15}|${rowNum}`,
+    branch: 'Bishop',
+    businessDate: MAY15,
+    rowNum,
+    ...spec,
+  });
+}
+
+const may15Rows: TransactionRow[] = [
+  // ─── Kimberry real rows ─────────────────────────────────────────────────
+  kim({ staff: 'Ney',  course: 'DTM', duration: 60, timeIn: '11:10', timeOut: '12:10', method: 'CREDIT', price:  98, credit:  98, commission: 31 }),
+  kim({ staff: 'Beer', course: 'FR',  duration: 60, timeIn: '11:10', timeOut: '12:10', method: 'CASH',   price:  70, cash:    70, commission: 23 }),
+  kim({ staff: 'Nana', course: 'DTM', duration: 60, timeIn: '11:25', timeOut: '12:25', method: 'CREDIT', price:  98, credit:  98, commission: 31 }),
+  kim({ staff: 'Lin',  course: 'FNS', duration: 60, timeIn: '11:20', timeOut: '12:20', method: 'CREDIT', price:  80, credit:  80, commission: 26 }),
+  kim({ staff: 'Nan',  course: 'DTM', duration: 60, timeIn: '13:10', timeOut: '14:10', method: 'CREDIT', price:  98, credit:  98, commission: 31 }),
+  kim({ staff: 'Pra',  course: 'DTM', duration: 60, timeIn: '14:05', timeOut: '15:05', method: 'CREDIT', price:  98, credit:  98, commission: 31 }),
+  kim({ staff: 'Ney',  course: 'FR',  duration: 90, timeIn: '14:15', timeOut: '15:45', method: 'QR',     price: 100, qr:     100, commission: 31 }),
+  kim({ staff: 'Beer', course: 'FR',  duration: 90, timeIn: '14:15', timeOut: '15:45', method: 'QR',     price: 100, qr:     100, commission: 31 }),
+
+  // ─── Kimberry EXTRA → Bishop (covered by Bishop real rows below) ────────
+  kim({ staff: 'Nana', course: 'FR',  duration: 60, timeIn: '16:20', timeOut: '17:20', method: 'EXTRA BS', commission: 23 }),
+  kim({ staff: 'Lin',  course: 'FR',  duration: 60, timeIn: '16:20', timeOut: '17:20', method: 'EXTRA BS', commission: 23 }),
+  kim({ staff: 'Nan',  course: 'FR',  duration: 60, timeIn: '17:05', timeOut: '18:05', method: 'EXTRA BS', commission: 23 }),
+  kim({ staff: 'Pra',  course: 'FR',  duration: 60, timeIn: '17:05', timeOut: '18:05', method: 'EXTRA BS', commission: 23 }),
+  kim({ staff: 'Ney',  course: 'HOM', duration: 60, timeIn: '19:25', timeOut: '20:25', method: 'EXTRA BS', commission: 34 }),
+
+  // ─── Kimberry EXTRA → Chulia (uncovered — Chulia logs nothing this day) ─
+  kim({ staff: 'Beer', course: 'FR',  duration: 90, timeIn: '22:15', timeOut: '23:45', method: 'EXTRA CL', commission: 31 }),
+  kim({ staff: 'Nana', course: 'FNS', duration: 90, timeIn: '22:15', timeOut: '23:45', method: 'EXTRA CL', commission: 35 }),
+  kim({ staff: 'Lin',  course: 'FNS', duration: 90, timeIn: '22:20', timeOut: '23:50', method: 'EXTRA CL', commission: 35 }),
+  kim({ staff: 'Nan',  course: 'BMT', duration: 60, timeIn: '23:50', timeOut: '00:50', method: 'EXTRA CL', commission: 26 }),
+  kim({ staff: 'Beer', course: 'BMT', duration: 60, timeIn: '23:50', timeOut: '00:50', method: 'EXTRA CL', commission: 26 }),
+
+  // ─── Bishop real rows ───────────────────────────────────────────────────
+  bishop({ staff: 'Nana', course: 'FR',  duration: 60, timeIn: '16:20', timeOut: '17:20', method: 'CREDIT', price:  68, credit:  68, commission: 23 }),
+  bishop({ staff: 'Lin',  course: 'FR',  duration: 60, timeIn: '16:30', timeOut: '17:30', method: 'CREDIT', price:  68, credit:  68, commission: 23 }),
+  bishop({ staff: 'Yui',  course: 'FR',  duration: 60, timeIn: '16:30', timeOut: '17:30', method: 'CREDIT', price:  68, credit:  68, commission: 23 }),
+  bishop({ staff: 'Nan',  course: 'FR',  duration: 60, timeIn: '17:05', timeOut: '18:05', method: 'CASH',   price:  68, cash:    68, commission: 23 }),
+  bishop({ staff: 'Pra',  course: 'FR',  duration: 60, timeIn: '17:05', timeOut: '18:05', method: 'QR',     price:  68, qr:     68, commission: 23 }),
+  bishop({ staff: 'Ney',  course: 'HOM', duration: 60, timeIn: '19:25', timeOut: '20:25', method: 'CREDIT', price: 115, credit: 115, commission: 34 }),
+];
+
+const may15Roster: Staff[] = [
+  { name: 'Beer', homeBranch: 'Kimberry', isFreelance: false, active: true },
+  { name: 'Ney',  homeBranch: 'Kimberry', isFreelance: false, active: true },
+  { name: 'Nana', homeBranch: 'Kimberry', isFreelance: false, active: true },
+  { name: 'Lin',  homeBranch: 'Kimberry', isFreelance: false, active: true },
+  { name: 'Nan',  homeBranch: 'Kimberry', isFreelance: false, active: true },
+  { name: 'Pra',  homeBranch: 'Kimberry', isFreelance: false, active: true },
+  { name: 'Yui',  homeBranch: 'Bishop',   isFreelance: false, active: true },
+];
+
+// May 2026 cycle: 2026-04-21 → 2026-05-20 (covers May 15).
+const mayCycle = cycleDates(4, 2026, 21);
+
+// ---------------------------------------------------------------------------
+// May 15, 2026 — gold-standard regression
+// ---------------------------------------------------------------------------
+
+describe('May 15, 2026 gold-standard regression', () => {
+  describe('buildPerBranchView (cashier panel — sums EVERY row at logged branch)', () => {
+    const map = buildPerBranchView(may15Rows);
+
+    it.each<[string, number]>([
+      ['beer|Kimberry|2026-05-15', 111], // 23 + 31 + 31 + 26
+      ['ney|Kimberry|2026-05-15',   96], // 31 + 31 + 34 (EXTRA BS counts at Kim too)
+      ['nana|Kimberry|2026-05-15',  89], // 31 + 23 + 35
+      ['lin|Kimberry|2026-05-15',   84], // 26 + 23 + 35
+      ['nan|Kimberry|2026-05-15',   80], // 31 + 23 + 26
+      ['pra|Kimberry|2026-05-15',   54], // 31 + 23
+    ])('Kimberry panel %s = %i', (key, expected) => {
+      expect(map[key]?.total).toBe(expected);
+    });
+
+    it('Bishop panel matches cashier panel for that day', () => {
+      expect(map['nana|Bishop|2026-05-15']?.total).toBe(23);
+      expect(map['lin|Bishop|2026-05-15']?.total).toBe(23);
+      expect(map['yui|Bishop|2026-05-15']?.total).toBe(23);
+      expect(map['nan|Bishop|2026-05-15']?.total).toBe(23);
+      expect(map['pra|Bishop|2026-05-15']?.total).toBe(23);
+      expect(map['ney|Bishop|2026-05-15']?.total).toBe(34);
+    });
+
+    it('Chulia panel is empty (no Chulia-logged rows on May 15)', () => {
+      const chuliaKeys = Object.keys(map).filter((k) => k.includes('|Chulia|'));
+      expect(chuliaKeys).toEqual([]);
+    });
+
+    it('balm and book parts default to zero in the May 15 fixture', () => {
+      for (const cell of Object.values(map)) {
+        expect(cell.balm).toBe(0);
+        expect(cell.book).toBe(0);
+      }
+    });
+  });
+
+  describe('buildCanonicalView (true payout — covered EXTRAs drop, uncovered fall back)', () => {
+    const map = buildCanonicalView(may15Rows);
+
+    function totalForStaff(staffLc: string): number {
+      return Object.entries(map)
+        .filter(([k]) => k.startsWith(staffLc + '|'))
+        .reduce((s, [, v]) => s + v.total, 0);
+    }
+
+    it.each<[string, number]>([
+      ['beer', 111],
+      ['ney',   96],
+      ['nana',  89],
+      ['lin',   84],
+      ['nan',   80],
+      ['pra',   54],
+      ['yui',   23],
+    ])('canonical total for %s = %i', (staff, expected) => {
+      expect(totalForStaff(staff)).toBe(expected);
+    });
+
+    it('EXTRA BS rows are covered by matching Bishop real rows — exactly one Bishop credit per staff', () => {
+      expect(map['nana|Bishop|2026-05-15']?.total).toBe(23);
+      expect(map['lin|Bishop|2026-05-15']?.total).toBe(23);
+      expect(map['nan|Bishop|2026-05-15']?.total).toBe(23);
+      expect(map['pra|Bishop|2026-05-15']?.total).toBe(23);
+      expect(map['ney|Bishop|2026-05-15']?.total).toBe(34);
+    });
+
+    it('EXTRA CL rows fall back to Chulia (no Chulia real rows logged)', () => {
+      expect(map['beer|Chulia|2026-05-15']?.total).toBe(57); // 31 + 26
+      expect(map['nana|Chulia|2026-05-15']?.total).toBe(35);
+      expect(map['lin|Chulia|2026-05-15']?.total).toBe(35);
+      expect(map['nan|Chulia|2026-05-15']?.total).toBe(26);
+    });
+
+    it('Beer real Kim FR 90 and EXTRA CL FR 90 both count (different attribution branches)', () => {
+      expect(map['beer|Kimberry|2026-05-15']?.total).toBe(54); // 23 + 31 (real)
+      expect(map['beer|Chulia|2026-05-15']?.total).toBe(57);   // 31 + 26 (fallback)
+    });
+  });
+
+  describe('buildSalaryBoard (cycle-level home-branch attribution)', () => {
+    const board = buildSalaryBoard(may15Rows, may15Roster, mayCycle);
+
+    it('Kimberry section contains all 6 Kimberry-home staff', () => {
+      const names = board.perBranch.Kimberry.map((r) => r.staff).sort();
+      expect(names).toEqual(['Beer', 'Lin', 'Nan', 'Nana', 'Ney', 'Pra']);
+    });
+
+    it.each<[string, number]>([
+      ['Beer', 111],
+      ['Ney',   96],
+      ['Nana',  89],
+      ['Lin',   84],
+      ['Nan',   80],
+      ['Pra',   54],
+    ])('cycleTotal for %s = %i', (staff, expected) => {
+      const r = board.perBranch.Kimberry.find((row) => row.staff === staff);
+      expect(r).toBeDefined();
+      expect(r!.cycleTotal).toBe(expected);
+    });
+
+    it('Yui (Bishop home) cycleTotal = 23', () => {
+      const yui = board.perBranch.Bishop.find((r) => r.staff === 'Yui');
+      expect(yui).toBeDefined();
+      expect(yui!.cycleTotal).toBe(23);
+    });
+
+    it('multi-branch summary lists every staff who appeared at 2+ branches in the canonical view', () => {
+      const names = board.multiBranch.map((r) => r.staff).sort();
+      // Yui (Bishop only) is excluded; everyone else appeared at ≥2 branches.
+      expect(names).toEqual(['Beer', 'Lin', 'Nan', 'Nana', 'Ney', 'Pra']);
+    });
+
+    it('Chulia section is empty (no Chulia-home staff in the roster)', () => {
+      expect(board.perBranch.Chulia).toEqual([]);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 13.4 regression — Freelance ad-hoc rows do not leak into roster-staff totals
+//
+// After the freelancer-rebuild migration (task 13.1), a Freelance transaction
+// is no longer attached to a roster member. Instead the row carries:
+//   staff             = 'Freelance' (literal label, not a roster name)
+//   freelancer_name   = ad-hoc person who served the customer
+//   freelancer_payout = what we paid them (e.g. 50)
+//   method            = 'Freelance'
+//   commission        = 0 (Freelance method earns no roster commission)
+//
+// The salary board filters by `method` (`isFreelanceMethod`), so even though
+// the row's `staff` field reads "Freelance", the views must never bucket it
+// under `freelance|<branch>|<date>` and `buildSalaryBoard` must never emit a
+// roster SalaryRow whose name is "Freelance".
+//
+// Validates: Requirements 9.6
+// ---------------------------------------------------------------------------
+
+describe('Freelance ad-hoc rows do not leak into roster-staff totals (task 13.4)', () => {
+  // Construct the freelance row with the realistic post-13.1 shape. The
+  // domain TransactionRow doesn't model `freelancerPayout` directly (the
+  // salary engine doesn't read it — the daily ledger does), so we attach
+  // it via an extension type to mirror the persisted shape.
+  const freelanceRow: TransactionRow = {
+    ...row({
+      rowId: 'Kimberry|2026-05-15|9001',
+      branch: 'Kimberry',
+      businessDate: MAY15,
+      rowNum: 9001,
+      staff: 'Freelance',
+      course: 'FR',
+      duration: 60,
+      method: 'Freelance',
+      price: 100,
+      cash: 100,
+      commission: 0,
+    }),
+    ...({ freelancerPayout: 50 } as object),
+  } as TransactionRow;
+
+  // A regular roster-staff row at the same date/branch — control to prove
+  // the freelance row didn't displace or pollute real bucketing.
+  const beerCash = row({
+    rowId: 'Kimberry|2026-05-15|9002',
+    branch: 'Kimberry',
+    businessDate: MAY15,
+    rowNum: 9002,
+    staff: 'Beer',
+    course: 'FR',
+    duration: 60,
+    method: 'CASH',
+    price: 70,
+    cash: 70,
+    commission: 23,
+  });
+
+  const rows: TransactionRow[] = [freelanceRow, beerCash];
+
+  it('buildPerBranchView produces no freelance|... bucket and leaves roster buckets intact', () => {
+    const map = buildPerBranchView(rows);
+    expect(map['freelance|Kimberry|2026-05-15']).toBeUndefined();
+    // No bucket on any branch keyed by the literal staff label.
+    expect(
+      Object.keys(map).filter((k) => k.startsWith('freelance|')),
+    ).toEqual([]);
+    // Sanity: Beer's bucket reflects the control row exactly.
+    expect(map['beer|Kimberry|2026-05-15']?.total).toBe(23);
+  });
+
+  it('buildCanonicalView produces no freelance|... bucket and leaves roster buckets intact', () => {
+    const map = buildCanonicalView(rows);
+    expect(map['freelance|Kimberry|2026-05-15']).toBeUndefined();
+    expect(
+      Object.keys(map).filter((k) => k.startsWith('freelance|')),
+    ).toEqual([]);
+    expect(map['beer|Kimberry|2026-05-15']?.total).toBe(23);
+  });
+
+  it('buildSalaryBoard never emits a SalaryRow named "Freelance" in perBranch or multiBranch', () => {
+    const board = buildSalaryBoard(rows, may15Roster, mayCycle);
+    const allStaff = [
+      ...board.perBranch.Kimberry,
+      ...board.perBranch.Bishop,
+      ...board.perBranch.Chulia,
+      ...board.multiBranch,
+    ].map((r) => r.staff.toLowerCase());
+    expect(allStaff).not.toContain('freelance');
+
+    // Beer (the control) still earns exactly 23 — proof that filtering the
+    // Freelance row didn't accidentally drop its neighbours.
+    const beer = board.perBranch.Kimberry.find((r) => r.staff === 'Beer');
+    expect(beer?.cycleTotal).toBe(23);
+  });
+
+  it('a Freelance row with non-zero commission would still be filtered (defence-in-depth)', () => {
+    // Hypothetical: a stale Freelance row somehow has commission=99. The
+    // method filter must still drop it from roster totals — commission is
+    // not the gating signal, method is.
+    const stale: TransactionRow = row({
+      rowId: 'Kimberry|2026-05-15|9003',
+      branch: 'Kimberry',
+      businessDate: MAY15,
+      rowNum: 9003,
+      staff: 'Freelance',
+      course: 'FR',
+      duration: 60,
+      method: 'Freelance',
+      price: 100,
+      cash: 100,
+      commission: 99,
+    });
+    const map = buildCanonicalView([stale, beerCash]);
+    expect(map['freelance|Kimberry|2026-05-15']).toBeUndefined();
+    expect(map['beer|Kimberry|2026-05-15']?.total).toBe(23);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coverage worked example — proves Property 7 with a concrete scenario.
+// ---------------------------------------------------------------------------
+
+describe('Coverage worked example (Property 7 in concrete form)', () => {
+  it('adding a covering Chulia FNS 90 real row for Nana keeps her cycleTotal = 89 (EXTRA dropped, real takes its place)', () => {
+    // Without coverage (the May 15 dataset as-is):
+    //   Nana = Kim DTM 60 (31) + Kim FR 60 EXTRA BS (covered) + Kim FNS 90 EXTRA CL (35, fallback) + Bishop FR 60 (23)
+    //        = 31 + 35 + 23 = 89
+    //
+    // Add a Chulia FNS 90 real row (commission 35) for Nana on May 15:
+    //   - The EXTRA CL FNS 90 is now COVERED → drops out.
+    //   - The new Chulia real row contributes 35 at Chulia.
+    //   - Net change: -35 (EXTRA dropped) + 35 (real) = 0.
+    //   - cycleTotal stays 89.
+    const withCovering: TransactionRow[] = [
+      ...may15Rows,
+      row({
+        rowId: 'Chulia|2026-05-15|999',
+        branch: 'Chulia',
+        businessDate: MAY15,
+        rowNum: 999,
+        staff: 'Nana',
+        course: 'FNS',
+        duration: 90,
+        method: 'CREDIT',
+        price: 115,
+        credit: 115,
+        commission: 35,
+      }),
+    ];
+
+    const board = buildSalaryBoard(withCovering, may15Roster, mayCycle);
+    const nana = board.perBranch.Kimberry.find((r) => r.staff === 'Nana');
+    expect(nana).toBeDefined();
+    expect(nana!.cycleTotal).toBe(89);
+  });
+
+  it('if the covering row had a DIFFERENT commission, the cycleTotal would shift by exactly the difference', () => {
+    // Same covering scenario, but the Chulia real row's commission is 50
+    // (e.g. with a balm bonus). The EXTRA (35) drops; the real (50) credits.
+    // Nana cycleTotal: 89 - 35 + 50 = 104.
+    const withCovering: TransactionRow[] = [
+      ...may15Rows,
+      row({
+        rowId: 'Chulia|2026-05-15|998',
+        branch: 'Chulia',
+        businessDate: MAY15,
+        rowNum: 998,
+        staff: 'Nana',
+        course: 'FNS',
+        duration: 90,
+        method: 'CREDIT',
+        price: 115,
+        credit: 115,
+        commission: 50,
+      }),
+    ];
+
+    const board = buildSalaryBoard(withCovering, may15Roster, mayCycle);
+    const nana = board.perBranch.Kimberry.find((r) => r.staff === 'Nana');
+    expect(nana!.cycleTotal).toBe(104);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Property test generators
+// ---------------------------------------------------------------------------
+
+const ALL_BRANCHES: readonly Branch[] = ['Kimberry', 'Bishop', 'Chulia'] as const;
+
+const arbBranch = fc.constantFrom<Branch[]>('Kimberry', 'Bishop', 'Chulia');
+const arbStaff = fc.constantFrom('beer', 'ney', 'nana', 'lin', 'nan', 'pra');
+const arbCourse = fc.constantFrom<Course[]>('FR', 'HS', 'FNS', 'BMT', 'BAT', 'DTM');
+const arbDuration = fc.constantFrom<Duration[]>(30, 60, 90, 120);
+const arbDate = fc.constantFrom('2026-05-14', '2026-05-15', '2026-05-16');
+const arbCommission = fc.integer({ min: 10, max: 100 });
+
+// EXTRA appears ~30% of the time so coverage scenarios surface frequently.
+const arbMethod = fc.oneof(
+  { weight: 7, arbitrary: fc.constantFrom('CASH', 'QR', 'CREDIT', 'Freelance') },
+  { weight: 3, arbitrary: fc.constantFrom('EXTRA KM', 'EXTRA BS', 'EXTRA CL') },
+);
+
+const arbNonExtraMethod = fc.constantFrom('CASH', 'QR', 'CREDIT', 'Freelance');
+
+function buildArbRow(
+  methodArb: fc.Arbitrary<string>,
+): fc.Arbitrary<TransactionRow> {
+  return fc
+    .record({
+      rowId: fc.uuid(),
+      branch: arbBranch,
+      businessDate: arbDate,
+      rowNum: fc.integer({ min: 1, max: 9999 }),
+      staff: arbStaff,
+      course: arbCourse,
+      duration: arbDuration,
+      method: methodArb,
+      commission: arbCommission,
+    })
+    .map(
+      (r): TransactionRow => ({
+        rowId: r.rowId,
+        branch: r.branch,
+        businessDate: r.businessDate,
+        rowNum: r.rowNum,
+        staff: r.staff,
+        course: r.course,
+        duration: r.duration,
+        timeIn: null,
+        timeOut: null,
+        addon: 0,
+        commission: r.commission,
+        method: r.method,
+        cash: 0,
+        qr: 0,
+        credit: 0,
+        price: 0,
+        note: '',
+        revision: 1,
+      }),
+    );
+}
+
+const arbRow = buildArbRow(arbMethod);
+const arbNonExtraRow = buildArbRow(arbNonExtraMethod);
+
+// ---------------------------------------------------------------------------
+// Property 5: Canonical view never double-counts
+//
+// For any rows R, any staff s, any day d:
+//   Σ_branches buildCanonicalView(R)[s|B|d]
+// equals the sum of `commission` over the canonical projection of R for
+// (s, d) — that is, real rows for (s, d) plus EXTRAs for (s, d) whose
+// destination is NOT covered by a matching real row at that destination,
+// minus freelance rows and EXTRAs whose destination doesn't decode.
+//
+// Validates: Requirements 9.4, 22.1, 22.3 (Property 5)
+// ---------------------------------------------------------------------------
+describe('Property 5: Canonical view never double-counts', () => {
+  it('canonical sum across branches equals canonical-projection sum, per (staff, day)', () => {
+    fc.assert(
+      fc.property(fc.array(arbRow, { minLength: 0, maxLength: 12 }), (rows) => {
+        // Independent canonical-projection sum, keyed on (lower(staff), date).
+        const realKeys = new Set<string>();
+        for (const r of rows) {
+          if (String(r.method).toLowerCase() === 'freelance') continue;
+          if (decodeExtraDestination(String(r.method)) !== null) continue;
+          realKeys.add(
+            buildExtraMatchKey({
+              staff: r.staff,
+              businessDate: r.businessDate,
+              course: r.course,
+              duration: r.duration,
+              branch: r.branch,
+            }),
+          );
+        }
+
+        const expected: Record<string, number> = {};
+        for (const r of rows) {
+          if (String(r.method).toLowerCase() === 'freelance') continue;
+          const dest = decodeExtraDestination(String(r.method));
+          if (dest !== null) {
+            const k = buildExtraMatchKey({
+              staff: r.staff,
+              businessDate: r.businessDate,
+              course: r.course,
+              duration: r.duration,
+              branch: dest,
+            });
+            if (realKeys.has(k)) continue; // covered EXTRA — drop
+          } else if (isExtraMethod(String(r.method))) {
+            // EXTRA-shaped without decodable destination — implementation skips.
+            continue;
+          }
+          const ek = `${r.staff.toLowerCase()}|${r.businessDate}`;
+          expected[ek] = (expected[ek] ?? 0) + r.commission;
+        }
+
+        // Sum the actual canonical map across branches per (staff, day).
+        const canonical = buildCanonicalView(rows);
+        const actual: Record<string, number> = {};
+        for (const k of Object.keys(canonical)) {
+          const parts = k.split('|');
+          const staffLc = parts[0];
+          const date = parts[2];
+          const ek = `${staffLc}|${date}`;
+          actual[ek] = (actual[ek] ?? 0) + canonical[k].total;
+        }
+
+        expect(actual).toEqual(expected);
+      }),
+      { numRuns: 100 },
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Property 6: Canonical fallback credits destination
+//
+// For any EXTRA E with destination D NOT covered by a real row at D,
+// E.commission appears in canonical[lower(E.staff)|D|E.businessDate].
+// Other rows for the same staff/dest/date may also contribute, so the
+// bucket value is `>= E.commission`.
+//
+// Validates: Requirements 19.4, 9.4 (Property 6)
+// ---------------------------------------------------------------------------
+describe('Property 6: Canonical fallback credits destination', () => {
+  it('every uncovered EXTRA contributes its commission to canonical[staff|dest|date]', () => {
+    fc.assert(
+      fc.property(fc.array(arbRow, { minLength: 0, maxLength: 10 }), (rows) => {
+        // Build realKeys exactly as the implementation does.
+        const realKeys = new Set<string>();
+        for (const r of rows) {
+          if (String(r.method).toLowerCase() === 'freelance') continue;
+          if (decodeExtraDestination(String(r.method)) !== null) continue;
+          realKeys.add(
+            buildExtraMatchKey({
+              staff: r.staff,
+              businessDate: r.businessDate,
+              course: r.course,
+              duration: r.duration,
+              branch: r.branch,
+            }),
+          );
+        }
+
+        const canonical = buildCanonicalView(rows);
+
+        for (const E of rows) {
+          const dest = decodeExtraDestination(String(E.method));
+          if (dest === null) continue; // not an EXTRA we can attribute
+          const k = buildExtraMatchKey({
+            staff: E.staff,
+            businessDate: E.businessDate,
+            course: E.course,
+            duration: E.duration,
+            branch: dest,
+          });
+          if (realKeys.has(k)) continue; // covered
+
+          const bucketKey = `${E.staff.toLowerCase()}|${dest}|${E.businessDate}`;
+          // E's commission is inside the bucket sum (alongside any other
+          // rows for the same staff/dest/date). Commissions are positive,
+          // so the bucket is at least E.commission.
+          expect(canonical[bucketKey]?.total ?? 0).toBeGreaterThanOrEqual(E.commission);
+        }
+      }),
+      { numRuns: 100 },
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Property 7: Coverage cancels EXTRA
+//
+// Take an EXTRA row E with destination D. Build dataset_with_E and
+// dataset_with_E_plus_covering, where the covering row is a real row at D
+// matching E.staff, E.date, E.course, E.duration. When E.commission and
+// covering.commission are equal (we use lookupStaffRate so they balance),
+// per-staff cycle totals are unchanged: the EXTRA stops counting and the
+// real row credits the same amount at the same destination.
+//
+// Validates: Requirements 19.3, 19.5 (Property 7)
+// ---------------------------------------------------------------------------
+describe('Property 7: Coverage cancels EXTRA', () => {
+  it('adding a covering real row leaves per-staff canonical totals unchanged when commissions match', () => {
+    fc.assert(
+      fc.property(
+        arbStaff,
+        arbDate,
+        arbCourse,
+        arbDuration,
+        fc.constantFrom('EXTRA KM', 'EXTRA BS', 'EXTRA CL'),
+        (staff, date, course, duration, extraMethod) => {
+          const dest = decodeExtraDestination(extraMethod)!;
+          // Use the staff-rate table so EXTRA.commission === covering.commission.
+          const rate = lookupStaffRate(course, duration, false);
+          fc.pre(rate > 0); // some (course, duration) cells are absent; skip them.
+
+          // Pick an origin branch that differs from dest so the EXTRA can't
+          // self-cover when its logged branch and destination coincide.
+          const originBranch: Branch = ALL_BRANCHES.find((b) => b !== dest)!;
+
+          const E = row({
+            rowId: 'extra-row',
+            branch: originBranch,
+            businessDate: date,
+            rowNum: 1,
+            staff,
+            course,
+            duration,
+            method: extraMethod,
+            commission: rate,
+          });
+
+          const C = row({
+            rowId: 'covering-row',
+            branch: dest,
+            businessDate: date,
+            rowNum: 2,
+            staff,
+            course,
+            duration,
+            method: 'CASH',
+            commission: rate,
+          });
+
+          const sumStaff = (rs: TransactionRow[]) => {
+            const map = buildCanonicalView(rs);
+            let total = 0;
+            for (const k of Object.keys(map)) {
+              if (k.split('|')[0] === staff.toLowerCase()) total += map[k].total;
+            }
+            return total;
+          };
+
+          // Before covering: E is uncovered → fallback credits dest with `rate`.
+          // After covering: E is covered → drops; C credits dest with `rate`.
+          // Net total over the staff is unchanged.
+          expect(sumStaff([E])).toBe(sumStaff([E, C]));
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Property 8: Per-branch view matches cashier panel
+//
+// buildPerBranchView(R)[s|B|d] equals the naive sum of `commission` over
+// rows where lower(staff) === s, branch === B, businessDate === d, and
+// method ≠ Freelance — including EXTRAs logged at B.
+//
+// Validates: Requirements 5.2, 5.4, 5.5, 9.2, 9.6, 22.2 (Property 8)
+// ---------------------------------------------------------------------------
+describe('Property 8: Per-branch view matches cashier panel', () => {
+  it('buildPerBranchView equals the naive non-Freelance commission sum keyed by (staff, branch, date)', () => {
+    fc.assert(
+      fc.property(fc.array(arbRow, { minLength: 0, maxLength: 12 }), (rows) => {
+        const map = buildPerBranchView(rows);
+
+        // Independently compute the expected map.
+        const expected: Record<string, number> = {};
+        for (const r of rows) {
+          if (String(r.method).toLowerCase() === 'freelance') continue;
+          const k = `${r.staff.toLowerCase()}|${r.branch}|${r.businessDate}`;
+          expected[k] = (expected[k] ?? 0) + r.commission;
+        }
+
+        // Compare totals only — the cell shape carries balm/book parts
+        // that the naive sum doesn't track.
+        const actualTotals: Record<string, number> = {};
+        for (const k of Object.keys(map)) {
+          actualTotals[k] = map[k].total;
+        }
+        expect(actualTotals).toEqual(expected);
+      }),
+      { numRuns: 100 },
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Property 9: Two-view reconciliation per cycle
+//
+// The full version (with EXTRA fallbacks) is exercised exhaustively by the
+// gold-standard regression. The property test below verifies the simpler
+// invariant that holds for any dataset without EXTRAs: when only real and
+// freelance rows are present, buildPerBranchView and buildCanonicalView
+// produce identical maps. This nails down the equivalence we care about
+// most often (per-cycle reconciliation in the absence of branch lending).
+//
+// Validates: Requirements 9.5 (Property 9)
+// ---------------------------------------------------------------------------
+describe('Property 9: Two-view reconciliation per cycle', () => {
+  it('without EXTRAs, buildPerBranchView and buildCanonicalView produce identical maps', () => {
+    fc.assert(
+      fc.property(
+        fc.array(arbNonExtraRow, { minLength: 0, maxLength: 12 }),
+        (rows) => {
+          expect(buildPerBranchView(rows)).toEqual(buildCanonicalView(rows));
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+});

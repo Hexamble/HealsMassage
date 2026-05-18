@@ -1,0 +1,12 @@
+Date,Branch,Staff,Course,Duration,TimeIn,TimeOut,Addon,Base_Comm,Balm_B,Book_B,Total_Comm,Method,Cash,QR,Credit,Comment,Flags,Price,No
+2026-05-15,Kimberry,Beer,FR,60,11:00,12:00,0,23,0,0,23,CASH,80,0,0,,,80,1
+2026-05-15,Kimberry,Beer,FR,90,13:00,14:30,0,31,0,0,31,QR,0,110,0,Regular customer,,110,2
+2026-05-15,Kimberry,Beer,FR,90,15:00,16:30,0,31,0,0,31,EXTRA CL,0,0,0,Cross-branch to Chulia,,0,3
+2026-05-15,Kimberry,Beer,BMT,60,17:00,18:00,0,26,0,0,26,extra-cl,0,0,0,,,0,4
+5/15/2026,Bishop,Lin,HS,60,10:30,11:30,0,28,3,0,31,QR,0,90,0,Got tipped,Staff Balm,90,1
+5/15/2026,Bishop,Nan,FR,90,12:00,13:30,0,32,0,4.5,36.5,CREDIT,0,0,110,,Booking,110,2
+2026-05-15,Chulia,Ney,FR,60,14:00,15:00,5,23,0,0,28,CASH,80,0,0,Add-on tip,,80,1
+2026-05-15,Chulia,Nana,FR,120,15:30,17:30,0,42,0,6,48,Freelance,0,0,0,Freelance worker,Booking,0,2
+2026-05-15,KM,Pra,HS,90,11:00,12:30,0,38,0,0,38,EXTRA BS,0,0,0,Shortcode branch,,0,5
+2026-05-15,Bishop,Pra,FR,60,,,0,16,0,0,16,CASH,80,0,0,,,80,3
+,Kimberry,Beer,FR,60,09:00,10:00,0,23,0,0,23,CASH,80,0,0,Missing date — malformed,,80,99
