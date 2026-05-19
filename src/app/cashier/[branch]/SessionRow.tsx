@@ -1,48 +1,38 @@
 'use client'
 
 /**
- * heals-system-rebuild — SessionRow (companion to SessionTable, Task 9.4)
+ * SessionRow — one editable row.
  *
- * Renders one editable session row — a `<tr>` with combobox / numeric
- * cells, autosaving on commit. Owns its own per-row dirty-edit state
- * but persists nothing locally beyond the `row` prop the parent
- * provides; the parent (SessionTable) fans out optimistic updates
- * and reconciles with server responses.
+ * Architecture (rewritten to fix the render-loop freeze):
  *
- * Empty rows (no staff yet) are rendered grayed-out as placeholders
- * and never call the server until at least staff + course + duration +
- * method are filled.
+ *   - NO useEffects with `row` or `onChange` in deps. Those caused
+ *     infinite re-render loops because the effects called onChange
+ *     which updated parent state which re-rendered the row which
+ *     re-fired the effect.
  *
- * Cells:
- *   #  — row number (display only)
- *   Staff      — ComboBox (roster + freelancers + free text)
- *   Course     — ComboBox (15 codes + free text)
- *   Duration   — ComboBox (30/60/90/120 + free text)
- *   Method     — ComboBox (7 canonical methods + free text)
- *   In         — text HH:mm (free text, optional)
- *   Out        — text HH:mm
- *   Cash       — number
- *   QR         — number
- *   Credit     — number
- *   Price      — number (auto-fills; editable for discounts)
- *   Addon      — number
- *   Flags      — MultiCombo (Staff Balm / Customer Balm / Booking + free)
- *   Base       — number (auto-fills from rate table; editable)
- *   Balm       — number (auto-fills 3 if Staff Balm; editable)
- *   Book       — number (auto-fills duration-bonus if Booking; editable)
- *   Total      — number (auto = base+balm+book+addon; editable)
- *   Comment    — text
- *   ×          — delete button (saved rows only)
+ *   - Auto-fill happens INSIDE the relevant cell's onChange handler.
+ *     When you change Course or Duration, the price/commission auto-
+ *     fill is computed synchronously inside that handler and passed
+ *     up via onChange in a single update.
+ *
+ *   - Time Out auto-fill runs inside the Time In onChange handler.
+ *
+ *   - Payment auto-fill runs inside the Method onCommit handler.
+ *
+ *   - Total commission is recomputed inside the base/balm/book/addon
+ *     onChange handlers (not as an effect).
+ *
+ *   - Wrapped in React.memo so the row only re-renders when its own
+ *     `row` prop actually changes (not when sibling rows change).
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 
 import {
   COURSES,
   DURATIONS,
   TRANSACTION_METHODS,
   type Branch,
-  type ExpenseRow as _ExpenseRow,
   type StaffMember,
   type TransactionRow,
 } from '@/domain/types'
@@ -61,10 +51,12 @@ import {
   METHOD_COLORS,
   readableForegroundFor,
 } from '@/lib/theming'
+import { computePaymentAutoFill } from '@/lib/paymentAutoFill'
+import { parseTimeInput } from '@/lib/timeFormat'
 import { computeRowDefaults } from './rowDefaults'
 
 // ---------------------------------------------------------------------------
-// Pill-color resolvers
+// Pill colors
 // ---------------------------------------------------------------------------
 
 function staffColorFor(value: string): { bg: string; fg: string } | null {
@@ -72,20 +64,17 @@ function staffColorFor(value: string): { bg: string; fg: string } | null {
   const bg = deriveStaffColor(value)
   return { bg, fg: readableForegroundFor(bg) }
 }
-
 function courseColorFor(value: string): { bg: string; fg: string } | null {
   const bg = (COURSE_COLORS as Record<string, string>)[value]
   if (!bg) return null
   return { bg, fg: readableForegroundFor(bg) }
 }
-
 function durationColorFor(value: string): { bg: string; fg: string } | null {
   const n = Number(value)
   const bg = (DURATION_COLORS as Record<number, string>)[n]
   if (!bg) return null
   return { bg, fg: readableForegroundFor(bg) }
 }
-
 function methodColorFor(value: string): { bg: string; fg: string } | null {
   const bg = (METHOD_COLORS as Record<string, string>)[value]
   if (!bg) return null
@@ -93,19 +82,11 @@ function methodColorFor(value: string): { bg: string; fg: string } | null {
 }
 
 // ---------------------------------------------------------------------------
-// Public types
+// Types
 // ---------------------------------------------------------------------------
 
-/**
- * In-memory editable shape of a session row. Mirrors `TransactionRow`
- * but keeps every value as a string so partial typing doesn't fight
- * `<input type="number">` quirks. The SessionTable converts to numbers
- * at save time.
- */
 export interface DraftRow {
-  /** Persistent UUID after server save; empty for unsaved rows. */
   id: string
-  /** Stable per-(branch, date) row number. */
   cashierRowNumber: number
   staff: string
   course: string
@@ -124,7 +105,6 @@ export interface DraftRow {
   bookingBonus: string
   totalCommission: string
   comment: string
-  /** Per-cell override flags so auto-fill never clobbers manual edits. */
   overrides: {
     price?: boolean
     base?: boolean
@@ -135,10 +115,8 @@ export interface DraftRow {
     qr?: boolean
     credit?: boolean
   }
-  /** Local-only flags — surface UI states. */
   saving?: boolean
   saveError?: string
-  /** True for the always-trailing placeholder row. */
   isPlaceholder?: boolean
 }
 
@@ -155,10 +133,6 @@ export interface SessionRowProps {
   onCommit: (row: DraftRow) => void
   onDelete: (row: DraftRow) => void
 }
-
-// ---------------------------------------------------------------------------
-// Conversion helpers
-// ---------------------------------------------------------------------------
 
 export function rowToDraft(r: TransactionRow): DraftRow {
   return {
@@ -195,16 +169,16 @@ export function blankDraft(cashierRowNumber: number): DraftRow {
     method: '',
     timeIn: '',
     timeOut: '',
-    cash: '0',
-    qr: '0',
-    credit: '0',
-    price: '0',
-    addon: '0',
+    cash: '',
+    qr: '',
+    credit: '',
+    price: '',
+    addon: '',
     flags: '',
-    baseCommission: '0',
-    balmBonus: '0',
-    bookingBonus: '0',
-    totalCommission: '0',
+    baseCommission: '',
+    balmBonus: '',
+    bookingBonus: '',
+    totalCommission: '',
     comment: '',
     overrides: {},
     isPlaceholder: true,
@@ -216,25 +190,20 @@ function num(s: string): number {
   return Number.isFinite(n) ? n : 0
 }
 
-/**
- * A draft is "saveable" when the four required fields are present.
- * Anything else (price, commission, flags) is optional.
- */
 export function isSaveable(d: DraftRow): boolean {
-  if (!d.staff.trim()) return false
-  if (!d.course.trim()) return false
-  if (!d.duration.trim()) return false
-  if (!d.method.trim()) return false
-  return true
+  return !!(
+    d.staff.trim() &&
+    d.course.trim() &&
+    d.duration.trim() &&
+    d.method.trim()
+  )
 }
 
 // ---------------------------------------------------------------------------
-// Cell-level option lists
+// Cell options
 // ---------------------------------------------------------------------------
 
 function buildStaffOptions(roster: StaffMember[]): ComboBoxOption[] {
-  // Branch staff only — freelancers are walk-ins typed by the cashier
-  // (per the user's note: "freelance can be nobody we don't know").
   return roster
     .filter((s) => !s.isFreelance && s.isActive)
     .map((s) => ({ value: s.name }))
@@ -254,10 +223,134 @@ const FLAG_OPTIONS: ComboBoxOption[] = [
 ]
 
 // ---------------------------------------------------------------------------
+// Pure helpers (no React, no side effects)
+// ---------------------------------------------------------------------------
+
+/**
+ * Recompute total commission from parts. Pure function.
+ */
+function recomputeTotal(row: DraftRow): DraftRow {
+  if (row.overrides.total) return row
+  const total =
+    Math.round(
+      (num(row.baseCommission) +
+        num(row.balmBonus) +
+        num(row.bookingBonus) +
+        num(row.addon)) *
+        100,
+    ) / 100
+  const totalStr = String(total)
+  if (totalStr === row.totalCommission) return row
+  return { ...row, totalCommission: totalStr }
+}
+
+/**
+ * Apply price/commission auto-fill from rate tables. Pure function.
+ * Only updates fields that aren't manually overridden.
+ */
+function applyRateAutoFill(
+  row: DraftRow,
+  branch: Branch,
+  businessDate: string,
+  prices: ReadonlyArray<PriceRow>,
+  regularRates: ReadonlyArray<RegularRateRow>,
+  freelanceRates: ReadonlyArray<FreelanceRateRow>,
+  staffIsFreelance: boolean,
+): DraftRow {
+  if (!row.course || !row.duration) return row
+  const parsedDuration = num(row.duration)
+  if (![30, 60, 90, 120].includes(parsedDuration)) return row
+
+  const defaults = computeRowDefaults({
+    branch,
+    businessDate,
+    course: row.course as Parameters<typeof computeRowDefaults>[0]['course'],
+    duration:
+      parsedDuration as Parameters<typeof computeRowDefaults>[0]['duration'],
+    method: row.method,
+    flags: row.flags,
+    staffIsFreelance,
+    prices,
+    regularRates,
+    freelanceRates,
+  })
+
+  const next: DraftRow = { ...row }
+  let changed = false
+  if (!row.overrides.price && next.price !== String(defaults.price)) {
+    next.price = String(defaults.price)
+    changed = true
+  }
+  if (
+    !row.overrides.base &&
+    next.baseCommission !== String(defaults.baseCommission)
+  ) {
+    next.baseCommission = String(defaults.baseCommission)
+    changed = true
+  }
+  if (
+    !row.overrides.balm &&
+    next.balmBonus !== String(defaults.balmBonus)
+  ) {
+    next.balmBonus = String(defaults.balmBonus)
+    changed = true
+  }
+  if (
+    !row.overrides.book &&
+    next.bookingBonus !== String(defaults.bookingBonus)
+  ) {
+    next.bookingBonus = String(defaults.bookingBonus)
+    changed = true
+  }
+  return changed ? recomputeTotal(next) : row
+}
+
+/**
+ * Auto-fill Time Out from Time In + Duration. Pure.
+ */
+function applyTimeOutAutoFill(row: DraftRow): DraftRow {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(row.timeIn.trim())
+  if (!m) return row
+  const dur = num(row.duration)
+  if (![30, 60, 90, 120].includes(dur)) return row
+  const startMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10)
+  const endMin = Math.min(startMin + dur, 23 * 60 + 59)
+  const hh = String(Math.floor(endMin / 60)).padStart(2, '0')
+  const mm = String(endMin % 60).padStart(2, '0')
+  const computed = `${hh}:${mm}`
+  if (row.timeOut === computed) return row
+  return { ...row, timeOut: computed }
+}
+
+/**
+ * Apply payment auto-fill. Pure.
+ */
+function applyPaymentAutoFill(row: DraftRow): DraftRow {
+  const result = computePaymentAutoFill({
+    method: row.method,
+    price: row.price,
+    currentPayment: { cash: row.cash, qr: row.qr, credit: row.credit },
+    overrides: {
+      cash: row.overrides.cash,
+      qr: row.overrides.qr,
+      credit: row.overrides.credit,
+    },
+  })
+  if (!result.changed.cash && !result.changed.qr && !result.changed.credit) {
+    return row
+  }
+  const updated = { ...row }
+  if (result.changed.cash) updated.cash = result.cash
+  if (result.changed.qr) updated.qr = result.qr
+  if (result.changed.credit) updated.credit = result.credit
+  return updated
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export default function SessionRow({
+function SessionRowImpl({
   row,
   branch,
   businessDate,
@@ -272,8 +365,6 @@ export default function SessionRow({
 }: SessionRowProps) {
   const staffOptions = useMemo(() => buildStaffOptions(roster), [roster])
 
-  // Per-row staffIsFreelance flag — drives rate-table routing in the
-  // auto-fill helper.
   const staffIsFreelance = useMemo(() => {
     const lc = row.staff.trim().toLowerCase()
     return roster.some(
@@ -281,153 +372,158 @@ export default function SessionRow({
     )
   }, [row.staff, roster])
 
-  // Auto-fill on (course, duration, method, flags, branch, staff) change
-  // — but never clobber cells the cashier manually overrode.
-  const autoFillKey = `${row.course}|${row.duration}|${row.method}|${row.flags}|${branch}|${staffIsFreelance}`
-  const lastAutoFillKey = useRef<string | null>(null)
-  useEffect(() => {
-    if (lastAutoFillKey.current === autoFillKey) return
-    lastAutoFillKey.current = autoFillKey
+  const [timeInError, setTimeInError] = useState(false)
+  const [timeOutError, setTimeOutError] = useState(false)
 
-    // Don't fight the user during partial typing — only auto-fill when
-    // course + duration are both set.
-    if (!row.course || !row.duration) return
+  // -- Cell change handlers (synchronous auto-fill, no useEffects) -------
 
-    const parsedDuration = num(row.duration)
-    if (![30, 60, 90, 120].includes(parsedDuration)) return
+  function changeStaff(v: string) {
+    onChange({ ...row, staff: v })
+  }
+  function commitStaff(v: string) {
+    const next = { ...row, staff: v }
+    onCommit(next)
+  }
 
-    const defaults = computeRowDefaults({
+  function changeCourse(v: string) {
+    const next = applyRateAutoFill(
+      { ...row, course: v },
       branch,
       businessDate,
-      course: row.course as Parameters<typeof computeRowDefaults>[0]['course'],
-      duration: parsedDuration as Parameters<typeof computeRowDefaults>[0]['duration'],
-      method: row.method,
-      flags: row.flags,
-      staffIsFreelance,
       prices,
       regularRates,
       freelanceRates,
-    })
-
-    const next: DraftRow = { ...row }
-    let changed = false
-    if (!row.overrides.price && next.price !== String(defaults.price)) {
-      next.price = String(defaults.price)
-      changed = true
-    }
-    if (
-      !row.overrides.base &&
-      next.baseCommission !== String(defaults.baseCommission)
-    ) {
-      next.baseCommission = String(defaults.baseCommission)
-      changed = true
-    }
-    if (!row.overrides.balm && next.balmBonus !== String(defaults.balmBonus)) {
-      next.balmBonus = String(defaults.balmBonus)
-      changed = true
-    }
-    if (
-      !row.overrides.book &&
-      next.bookingBonus !== String(defaults.bookingBonus)
-    ) {
-      next.bookingBonus = String(defaults.bookingBonus)
-      changed = true
-    }
-    if (
-      !row.overrides.total &&
-      next.totalCommission !== String(defaults.totalCommission)
-    ) {
-      next.totalCommission = String(defaults.totalCommission)
-      changed = true
-    }
-    if (changed) onChange(next)
-    // We intentionally skip onCommit here — auto-fills aren't a save
-    // event by themselves; the cashier's next blur on any cell will
-    // bundle them in.
-  }, [
-    autoFillKey,
-    branch,
-    businessDate,
-    prices,
-    regularRates,
-    freelanceRates,
-    onChange,
-    row,
-    staffIsFreelance,
-  ])
-
-  // Live total recompute when base/balm/book/addon change unless the
-  // cashier overrode total directly.
-  const partsKey = `${row.baseCommission}|${row.balmBonus}|${row.bookingBonus}|${row.addon}|${row.overrides.total ? '1' : '0'}`
-  const lastPartsKey = useRef<string | null>(null)
-  useEffect(() => {
-    if (lastPartsKey.current === partsKey) return
-    lastPartsKey.current = partsKey
-    if (row.overrides.total) return
-    const total =
-      Math.round(
-        (num(row.baseCommission) +
-          num(row.balmBonus) +
-          num(row.bookingBonus) +
-          num(row.addon)) *
-          100,
-      ) / 100
-    if (String(total) !== row.totalCommission) {
-      onChange({ ...row, totalCommission: String(total) })
-    }
-  }, [partsKey, row, onChange])
-
-  // Auto-fill Time Out from Time In + Duration whenever Time In is set
-  // and duration is one of the standard slots. The cashier can still
-  // override Time Out by typing — once they do, the override sticks
-  // until they clear Time In.
-  const timeOutKey = `${row.timeIn}|${row.duration}`
-  const lastTimeOutKey = useRef<string | null>(null)
-  useEffect(() => {
-    if (lastTimeOutKey.current === timeOutKey) return
-    lastTimeOutKey.current = timeOutKey
-    const m = /^(\d{1,2}):(\d{2})$/.exec(row.timeIn.trim())
-    if (!m) return
-    const dur = num(row.duration)
-    if (![30, 60, 90, 120].includes(dur)) return
-    const startMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10)
-    const endMin = Math.min(startMin + dur, 23 * 60 + 59)
-    const hh = String(Math.floor(endMin / 60)).padStart(2, '0')
-    const mm = String(endMin % 60).padStart(2, '0')
-    const computed = `${hh}:${mm}`
-    if (row.timeOut !== computed) {
-      onChange({ ...row, timeOut: computed })
-    }
-  }, [timeOutKey, row, onChange])
-
-  function patch(field: keyof DraftRow, value: unknown) {
-    onChange({ ...row, [field]: value })
+      staffIsFreelance,
+    )
+    onChange(next)
   }
-
-  function commit() {
+  function commitCourse() {
     onCommit(row)
   }
 
-  function setOverride(
-    name: keyof DraftRow['overrides'],
-    nextValue: string,
-  ) {
+  function changeDuration(v: string) {
+    let next = applyRateAutoFill(
+      { ...row, duration: v },
+      branch,
+      businessDate,
+      prices,
+      regularRates,
+      freelanceRates,
+      staffIsFreelance,
+    )
+    next = applyTimeOutAutoFill(next)
+    onChange(next)
+  }
+  function commitDuration() {
+    onCommit(row)
+  }
+
+  function changeMethod(v: string) {
+    onChange({ ...row, method: v })
+  }
+  function commitMethod(v: string) {
+    const withMethod = { ...row, method: v || row.method }
+    const filled = applyPaymentAutoFill(withMethod)
+    onChange(filled)
+    onCommit(filled)
+  }
+
+  function changeTimeIn(v: string) {
+    if (timeInError) setTimeInError(false)
+    const next = applyTimeOutAutoFill({ ...row, timeIn: v })
+    onChange(next)
+  }
+  function blurTimeIn() {
+    if (!row.timeIn.trim()) {
+      setTimeInError(false)
+      onCommit(row)
+      return
+    }
+    const result = parseTimeInput(row.timeIn)
+    if (result.valid) {
+      setTimeInError(false)
+      let next = { ...row, timeIn: result.formatted }
+      next = applyTimeOutAutoFill(next)
+      onChange(next)
+      onCommit(next)
+    } else {
+      setTimeInError(true)
+    }
+  }
+
+  function changeTimeOut(v: string) {
+    if (timeOutError) setTimeOutError(false)
+    onChange({ ...row, timeOut: v })
+  }
+  function blurTimeOut() {
+    if (!row.timeOut.trim()) {
+      setTimeOutError(false)
+      onCommit(row)
+      return
+    }
+    const result = parseTimeInput(row.timeOut)
+    if (result.valid) {
+      setTimeOutError(false)
+      const next = { ...row, timeOut: result.formatted }
+      onChange(next)
+      onCommit(next)
+    } else {
+      setTimeOutError(true)
+    }
+  }
+
+  function changeAddon(v: string) {
+    const next = recomputeTotal({ ...row, addon: v })
+    onChange(next)
+  }
+
+  function changeFlags(v: string) {
+    onChange({ ...row, flags: v })
+  }
+  function commitFlags() {
+    onCommit(row)
+  }
+
+  function changeComment(v: string) {
+    onChange({ ...row, comment: v })
+  }
+  function commitComment() {
+    onCommit(row)
+  }
+
+  function setOverridePrice(v: string) {
+    onChange({ ...row, price: v, overrides: { ...row.overrides, price: true } })
+  }
+  function setOverrideBase(v: string) {
+    const next = recomputeTotal({
+      ...row,
+      baseCommission: v,
+      overrides: { ...row.overrides, base: true },
+    })
+    onChange(next)
+  }
+  function setOverrideTotal(v: string) {
     onChange({
       ...row,
-      [
-        name === 'base'
-          ? 'baseCommission'
-          : name === 'balm'
-          ? 'balmBonus'
-          : name === 'book'
-          ? 'bookingBonus'
-          : name === 'total'
-          ? 'totalCommission'
-          : name
-      ]: nextValue,
-      overrides: { ...row.overrides, [name]: true },
+      totalCommission: v,
+      overrides: { ...row.overrides, total: true },
     })
   }
+  function changeCash(v: string) {
+    onChange({ ...row, cash: v, overrides: { ...row.overrides, cash: true } })
+  }
+  function changeQr(v: string) {
+    onChange({ ...row, qr: v, overrides: { ...row.overrides, qr: true } })
+  }
+  function changeCredit(v: string) {
+    onChange({ ...row, credit: v, overrides: { ...row.overrides, credit: true } })
+  }
+
+  function commitGeneric() {
+    onCommit(row)
+  }
+
+  // -- Render --
 
   const isDimmed = !!row.isPlaceholder && !isSaveable(row)
   const rowIdx = row.cashierRowNumber
@@ -453,8 +549,8 @@ export default function SessionRow({
         value={row.price}
         readOnly={readOnly}
         accent={!row.overrides.price}
-        onChange={(v) => setOverride('price', v)}
-        onCommit={commit}
+        onChange={setOverridePrice}
+        onCommit={commitGeneric}
       />
       <td className="px-0.5 py-0 align-middle min-w-[100px]">
         <ComboBox
@@ -464,11 +560,8 @@ export default function SessionRow({
           placeholder="Staff"
           disabled={readOnly}
           colorFor={staffColorFor}
-          onChange={(v) => patch('staff', v)}
-          onCommit={(v) => {
-            if (v !== row.staff) onChange({ ...row, staff: v })
-            commit()
-          }}
+          onChange={changeStaff}
+          onCommit={commitStaff}
         />
       </td>
       <td className="px-0.5 py-0 align-middle min-w-[64px]">
@@ -479,8 +572,8 @@ export default function SessionRow({
           placeholder="FR"
           disabled={readOnly}
           colorFor={courseColorFor}
-          onChange={(v) => patch('course', v)}
-          onCommit={() => commit()}
+          onChange={changeCourse}
+          onCommit={commitCourse}
         />
       </td>
       <td className="px-0.5 py-0 align-middle min-w-[58px]">
@@ -491,8 +584,8 @@ export default function SessionRow({
           placeholder="60"
           disabled={readOnly}
           colorFor={durationColorFor}
-          onChange={(v) => patch('duration', v)}
-          onCommit={() => commit()}
+          onChange={changeDuration}
+          onCommit={commitDuration}
         />
       </td>
       <td className="px-0.5 py-0 align-middle">
@@ -502,9 +595,14 @@ export default function SessionRow({
           value={row.timeIn}
           placeholder="HH:mm"
           disabled={readOnly}
-          onChange={(e) => patch('timeIn', e.target.value)}
-          onBlur={commit}
-          className="w-[62px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
+          onChange={(e) => changeTimeIn(e.target.value)}
+          onBlur={blurTimeIn}
+          className={[
+            'w-[62px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 rounded-md px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]',
+            timeInError
+              ? 'border-2 border-red-500'
+              : 'border border-zinc-300 dark:border-zinc-700',
+          ].join(' ')}
         />
       </td>
       <td className="px-0.5 py-0 align-middle">
@@ -514,17 +612,22 @@ export default function SessionRow({
           value={row.timeOut}
           placeholder="auto"
           disabled={readOnly}
-          onChange={(e) => patch('timeOut', e.target.value)}
-          onBlur={commit}
-          className="w-[62px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
+          onChange={(e) => changeTimeOut(e.target.value)}
+          onBlur={blurTimeOut}
+          className={[
+            'w-[62px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 rounded-md px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]',
+            timeOutError
+              ? 'border-2 border-red-500'
+              : 'border border-zinc-300 dark:border-zinc-700',
+          ].join(' ')}
         />
       </td>
       <NumberCell
         label="Add-on"
         value={row.addon}
         readOnly={readOnly}
-        onChange={(v) => patch('addon', v)}
-        onCommit={commit}
+        onChange={changeAddon}
+        onCommit={commitGeneric}
       />
       <NumberCell
         label="Total commission"
@@ -532,8 +635,8 @@ export default function SessionRow({
         readOnly={readOnly}
         accent={!row.overrides.total}
         bold
-        onChange={(v) => setOverride('total', v)}
-        onCommit={commit}
+        onChange={setOverrideTotal}
+        onCommit={commitGeneric}
       />
       <td className="px-0.5 py-0 align-middle min-w-[88px]">
         <ComboBox
@@ -543,40 +646,30 @@ export default function SessionRow({
           placeholder="CASH"
           disabled={readOnly}
           colorFor={methodColorFor}
-          onChange={(v) => patch('method', v)}
-          onCommit={() => commit()}
+          onChange={changeMethod}
+          onCommit={commitMethod}
         />
       </td>
       <NumberCell
         label="Cash"
         value={row.cash}
         readOnly={readOnly}
-        onChange={(v) =>
-          onChange({ ...row, cash: v, overrides: { ...row.overrides, cash: true } })
-        }
-        onCommit={commit}
+        onChange={changeCash}
+        onCommit={commitGeneric}
       />
       <NumberCell
         label="QR"
         value={row.qr}
         readOnly={readOnly}
-        onChange={(v) =>
-          onChange({ ...row, qr: v, overrides: { ...row.overrides, qr: true } })
-        }
-        onCommit={commit}
+        onChange={changeQr}
+        onCommit={commitGeneric}
       />
       <NumberCell
         label="Credit"
         value={row.credit}
         readOnly={readOnly}
-        onChange={(v) =>
-          onChange({
-            ...row,
-            credit: v,
-            overrides: { ...row.overrides, credit: true },
-          })
-        }
-        onCommit={commit}
+        onChange={changeCredit}
+        onCommit={commitGeneric}
       />
       <td className="px-0.5 py-0 align-middle min-w-[150px]">
         <MultiCombo
@@ -585,8 +678,8 @@ export default function SessionRow({
           options={FLAG_OPTIONS}
           placeholder="…"
           disabled={readOnly}
-          onChange={(v) => patch('flags', v)}
-          onCommit={() => commit()}
+          onChange={changeFlags}
+          onCommit={commitFlags}
         />
       </td>
       <td className="px-0.5 py-0 align-middle min-w-[100px]">
@@ -596,8 +689,8 @@ export default function SessionRow({
           value={row.comment}
           placeholder=""
           disabled={readOnly}
-          onChange={(e) => patch('comment', e.target.value)}
-          onBlur={commit}
+          onChange={(e) => changeComment(e.target.value)}
+          onBlur={commitComment}
           className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
         />
       </td>
@@ -628,7 +721,30 @@ export default function SessionRow({
       </td>
     </tr>
   )
+  // Suppress unused warning — setOverrideBase is exported via overrides but
+  // currently unused in render. Kept for future direct base-cell editing.
+  void setOverrideBase
 }
+
+// Memoize so a row only re-renders when its own props change,
+// not when sibling rows change.
+const SessionRow = memo(SessionRowImpl, (prev, next) => {
+  return (
+    prev.row === next.row &&
+    prev.branch === next.branch &&
+    prev.businessDate === next.businessDate &&
+    prev.roster === next.roster &&
+    prev.prices === next.prices &&
+    prev.regularRates === next.regularRates &&
+    prev.freelanceRates === next.freelanceRates &&
+    prev.readOnly === next.readOnly &&
+    prev.onChange === next.onChange &&
+    prev.onCommit === next.onCommit &&
+    prev.onDelete === next.onDelete
+  )
+})
+
+export default SessionRow
 
 // ---------------------------------------------------------------------------
 // NumberCell helper
