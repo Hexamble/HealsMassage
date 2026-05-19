@@ -359,11 +359,14 @@ export async function writeTransaction(
       `[writeTransaction] owner write: staff "${data.staff}" not found in roster; trusting typed name`,
     )
   } else {
-    return {
-      ok: false,
-      code: 'UNKNOWN_STAFF',
-      message: `Staff "${data.staff}" not found in roster`,
-    }
+    // Cashier typed a name not in the staff table. Accept it as a
+    // walk-in / borrowed staff from another shop. The name is stored
+    // verbatim on the transaction row. No roster gate — the user's
+    // workflow is "type any name freely".
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[writeTransaction] cashier write: staff "${data.staff}" not found in staff table; accepting as walk-in`,
+    )
   }
 
   // Roster check REMOVED. The user's workflow is: type any staff name

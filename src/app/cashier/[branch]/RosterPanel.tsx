@@ -196,6 +196,7 @@ export default function RosterPanel() {
             roster={roster}
             picked={pickedIds}
             onToggle={togglePick}
+            branch={branch}
           />
           <div>
             <h3 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1.5">
@@ -272,18 +273,25 @@ function RosterPicker({
   roster,
   picked,
   onToggle,
+  branch,
 }: {
   roster: StaffMember[]
   picked: string[]
   onToggle: (id: string) => void
+  branch: string
 }) {
-  const branchStaff = roster.filter((s) => !s.isFreelance && s.isActive)
+  // Only show staff whose home_branch matches the current branch.
+  // Each shop manages its own roster — you don't see other shops'
+  // staff here. Borrowed staff are typed directly in the table.
+  const branchStaff = roster.filter(
+    (s) => !s.isFreelance && s.isActive && s.homeBranch === branch,
+  )
   return (
     <div>
       {branchStaff.length > 0 && (
         <div>
-          <h3 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1.5">
-            Branch staff
+          <h3 className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-1.5">
+            {branch} staff
           </h3>
           <div className="flex flex-wrap gap-2">
             {branchStaff.map((s) => (

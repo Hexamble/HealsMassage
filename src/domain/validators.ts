@@ -169,9 +169,16 @@ export const transactionSchema = z
     }
 
     // Invariant 2: real-payment methods balance to price (Req 2.4).
+    // Skip the check entirely when the cashier hasn't entered any
+    // payment yet (cash+qr+credit all zero) — they're still building
+    // the row (typed staff/course/duration to see the auto-filled
+    // price/commission preview) and haven't gotten to the cash drawer
+    // yet. The row will be re-validated on the next save when payment
+    // is entered.
     if (isRealPayment) {
       const sum = data.cash + data.qr + data.credit
-      if (Math.abs(sum - data.price) > PAYMENT_EPSILON) {
+      const noPaymentYet = sum === 0
+      if (!noPaymentYet && Math.abs(sum - data.price) > PAYMENT_EPSILON) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['price'],

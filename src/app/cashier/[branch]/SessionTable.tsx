@@ -301,9 +301,11 @@ export default function SessionTable() {
                 : d,
             ),
           )
-          // Roll back the optimistic add so the failed row doesn't
-          // leak into panel sums.
-          if (!rowToSave.id) removeOptimistic(rowId)
+          // DO NOT roll back the optimistic row. The cashier needs to
+          // see the row stay put with an error indicator so they can
+          // fix it (e.g. add payment) and the autosave retries on
+          // the next blur. Removing it on every terminal error caused
+          // the "I typed a name and it disappeared" bug.
           return
         }
         if (isNetworkError(result.code)) {
