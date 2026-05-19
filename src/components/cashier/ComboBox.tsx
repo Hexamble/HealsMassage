@@ -68,6 +68,13 @@ export interface ComboBoxProps {
    * SessionTable to drive Tab navigation between cells.
    */
   inputRef?: React.RefObject<HTMLInputElement>
+  /**
+   * Optional pill-color resolver. When provided, the current value
+   * renders the input on a colored background (Google Sheet-style
+   * colored chips). Returning `null` falls back to the default
+   * neutral styling.
+   */
+  colorFor?: (value: string) => { bg: string; fg: string } | null
 }
 
 function labelOf(opt: ComboBoxOption): string {
@@ -95,6 +102,7 @@ export default function ComboBox({
   disabled,
   ariaLabel,
   inputRef: externalRef,
+  colorFor,
 }: ComboBoxProps) {
   const fallbackRef = useRef<HTMLInputElement>(null)
   const inputRef = externalRef ?? fallbackRef
@@ -216,6 +224,22 @@ export default function ComboBox({
         value={draft}
         placeholder={placeholder}
         disabled={disabled}
+        style={
+          colorFor && draft && !open
+            ? (() => {
+                const c = colorFor(draft)
+                return c
+                  ? {
+                      backgroundColor: c.bg,
+                      color: c.fg,
+                      borderColor: c.bg,
+                      fontWeight: 600,
+                      textAlign: 'center' as const,
+                    }
+                  : undefined
+              })()
+            : undefined
+        }
         onChange={(e) => {
           setDraft(e.target.value)
           setOpen(true)
@@ -231,7 +255,7 @@ export default function ComboBox({
         }}
         onKeyDown={handleKeyDown}
         className={[
-          'w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-2 py-1.5 text-sm',
+          'w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-1.5 py-1 text-xs',
           'focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)] focus:border-[var(--theme-primary)]',
           inputClassName ?? '',
         ].join(' ')}

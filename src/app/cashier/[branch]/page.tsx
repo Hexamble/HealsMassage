@@ -280,19 +280,17 @@ export default async function CashierPage({
       initialYesterdayTransactions={initialYesterdayTransactions}
       initialDailyRoster={initialDailyRoster}
     >
-      <div className="mx-auto max-w-[1600px] space-y-4 p-4 sm:p-6">
-        <header className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 border-l-8 border-l-[var(--theme-primary)]">
-          <div>
-            <h1 className="text-xl font-semibold flex items-center gap-2">
+      <div className="mx-auto max-w-[1600px] space-y-3 p-3 sm:p-4">
+        <header className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-2 border-l-8 border-l-[var(--theme-primary)]">
+          <div className="flex items-center gap-3">
+            <h1 className="text-base font-semibold flex items-center gap-2">
               <span
                 aria-hidden
                 className="inline-block h-3 w-3 rounded-full bg-[var(--theme-primary)]"
               />
-              {branch} cashier
+              {branch}
             </h1>
-            <p className="text-xs text-zinc-500">
-              Business date: <span className="font-mono">{businessDate}</span>
-            </p>
+            <p className="text-xs text-zinc-500 font-mono">{businessDate}</p>
           </div>
           <div className="flex items-center gap-2">
             <PendingSyncBadge />
@@ -320,17 +318,16 @@ export default async function CashierPage({
 
         <RosterPanel />
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-3">
           <SessionTable />
           <QueueBoard />
         </div>
 
-        <ExpenseBlock />
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <SummaryPanel />
           <EarningsPanel />
           <FreelanceMiniSummary />
+          <ExpenseBlock />
         </div>
       </div>
       <Toaster />

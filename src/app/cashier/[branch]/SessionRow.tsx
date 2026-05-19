@@ -54,7 +54,43 @@ import type {
 
 import ComboBox, { type ComboBoxOption } from '@/components/cashier/ComboBox'
 import MultiCombo from '@/components/cashier/MultiCombo'
+import {
+  COURSE_COLORS,
+  deriveStaffColor,
+  DURATION_COLORS,
+  METHOD_COLORS,
+  readableForegroundFor,
+} from '@/lib/theming'
 import { computeRowDefaults } from './rowDefaults'
+
+// ---------------------------------------------------------------------------
+// Pill-color resolvers
+// ---------------------------------------------------------------------------
+
+function staffColorFor(value: string): { bg: string; fg: string } | null {
+  if (!value.trim()) return null
+  const bg = deriveStaffColor(value)
+  return { bg, fg: readableForegroundFor(bg) }
+}
+
+function courseColorFor(value: string): { bg: string; fg: string } | null {
+  const bg = (COURSE_COLORS as Record<string, string>)[value]
+  if (!bg) return null
+  return { bg, fg: readableForegroundFor(bg) }
+}
+
+function durationColorFor(value: string): { bg: string; fg: string } | null {
+  const n = Number(value)
+  const bg = (DURATION_COLORS as Record<number, string>)[n]
+  if (!bg) return null
+  return { bg, fg: readableForegroundFor(bg) }
+}
+
+function methodColorFor(value: string): { bg: string; fg: string } | null {
+  const bg = (METHOD_COLORS as Record<string, string>)[value]
+  if (!bg) return null
+  return { bg, fg: readableForegroundFor(bg) }
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -406,7 +442,7 @@ export default function SessionRow({
     <tr
       className={`border-b border-zinc-100 dark:border-zinc-800 ${rowStateClass}`}
     >
-      <td className="px-2 py-1 text-xs text-zinc-500 align-middle text-right tabular-nums">
+      <td className="px-1 py-0.5 text-[10px] text-zinc-500 align-middle text-right tabular-nums">
         {row.cashierRowNumber}
       </td>
       <NumberCell
@@ -417,13 +453,14 @@ export default function SessionRow({
         onChange={(v) => setOverride('price', v)}
         onCommit={commit}
       />
-      <td className="px-1 py-0 align-middle min-w-[140px]">
+      <td className="px-0.5 py-0 align-middle min-w-[100px]">
         <ComboBox
           ariaLabel="Staff"
           value={row.staff}
           options={staffOptions}
-          placeholder="Staff name"
+          placeholder="Staff"
           disabled={readOnly}
+          colorFor={staffColorFor}
           onChange={(v) => patch('staff', v)}
           onCommit={(v) => {
             if (v !== row.staff) onChange({ ...row, staff: v })
@@ -431,29 +468,31 @@ export default function SessionRow({
           }}
         />
       </td>
-      <td className="px-1 py-0 align-middle min-w-[80px]">
+      <td className="px-0.5 py-0 align-middle min-w-[64px]">
         <ComboBox
           ariaLabel="Course"
           value={row.course}
           options={COURSE_OPTIONS}
           placeholder="FR"
           disabled={readOnly}
+          colorFor={courseColorFor}
           onChange={(v) => patch('course', v)}
           onCommit={() => commit()}
         />
       </td>
-      <td className="px-1 py-0 align-middle min-w-[70px]">
+      <td className="px-0.5 py-0 align-middle min-w-[58px]">
         <ComboBox
           ariaLabel="Duration"
           value={row.duration}
           options={DURATION_OPTIONS}
           placeholder="60"
           disabled={readOnly}
+          colorFor={durationColorFor}
           onChange={(v) => patch('duration', v)}
           onCommit={() => commit()}
         />
       </td>
-      <td className="px-1 py-0 align-middle">
+      <td className="px-0.5 py-0 align-middle">
         <input
           type="text"
           aria-label="Time in"
@@ -462,10 +501,10 @@ export default function SessionRow({
           disabled={readOnly}
           onChange={(e) => patch('timeIn', e.target.value)}
           onBlur={commit}
-          className="w-[70px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
+          className="w-[62px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
         />
       </td>
-      <td className="px-1 py-0 align-middle">
+      <td className="px-0.5 py-0 align-middle">
         <input
           type="text"
           aria-label="Time out"
@@ -474,7 +513,7 @@ export default function SessionRow({
           disabled={readOnly}
           onChange={(e) => patch('timeOut', e.target.value)}
           onBlur={commit}
-          className="w-[70px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
+          className="w-[62px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
         />
       </td>
       <NumberCell
@@ -493,13 +532,14 @@ export default function SessionRow({
         onChange={(v) => setOverride('total', v)}
         onCommit={commit}
       />
-      <td className="px-1 py-0 align-middle min-w-[110px]">
+      <td className="px-0.5 py-0 align-middle min-w-[88px]">
         <ComboBox
           ariaLabel="Method"
           value={row.method}
           options={METHOD_OPTIONS}
           placeholder="CASH"
           disabled={readOnly}
+          colorFor={methodColorFor}
           onChange={(v) => patch('method', v)}
           onCommit={() => commit()}
         />
@@ -535,27 +575,27 @@ export default function SessionRow({
         }
         onCommit={commit}
       />
-      <td className="px-1 py-0 align-middle min-w-[180px]">
+      <td className="px-0.5 py-0 align-middle min-w-[150px]">
         <MultiCombo
           ariaLabel="Flags"
           value={row.flags}
           options={FLAG_OPTIONS}
-          placeholder="Add flag…"
+          placeholder="…"
           disabled={readOnly}
           onChange={(v) => patch('flags', v)}
           onCommit={() => commit()}
         />
       </td>
-      <td className="px-1 py-0 align-middle min-w-[120px]">
+      <td className="px-0.5 py-0 align-middle min-w-[100px]">
         <input
           type="text"
           aria-label="Comment"
           value={row.comment}
-          placeholder="Notes"
+          placeholder=""
           disabled={readOnly}
           onChange={(e) => patch('comment', e.target.value)}
           onBlur={commit}
-          className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
+          className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
         />
       </td>
       <td className="px-1 py-0 align-middle text-right">
@@ -564,7 +604,7 @@ export default function SessionRow({
             type="button"
             aria-label={`Delete row ${row.cashierRowNumber}`}
             onClick={() => onDelete(row)}
-            className="text-zinc-400 hover:text-red-600 px-2 py-1 text-sm"
+            className="text-zinc-400 hover:text-red-600 px-1 py-0.5 text-sm"
           >
             ×
           </button>
@@ -611,7 +651,7 @@ function NumberCell({
   const [draft, setDraft] = useState(value)
   useEffect(() => setDraft(value), [value])
   return (
-    <td className="px-1 py-0 align-middle">
+    <td className="px-0.5 py-0 align-middle">
       <input
         type="text"
         inputMode="decimal"
@@ -624,10 +664,10 @@ function NumberCell({
         }}
         onBlur={onCommit}
         className={[
-          'w-[80px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 rounded-md px-2 py-1.5 text-sm text-right tabular-nums',
+          'w-[58px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 rounded-md px-1.5 py-1 text-xs text-right tabular-nums',
           'focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)] focus:border-[var(--theme-primary)]',
           accent ? 'text-zinc-500 dark:text-zinc-400' : '',
-          bold ? 'font-semibold' : '',
+          bold ? 'font-semibold text-zinc-900 dark:text-zinc-100' : '',
         ].join(' ')}
       />
     </td>

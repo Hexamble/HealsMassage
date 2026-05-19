@@ -85,6 +85,60 @@ export const DURATION_COLORS: Record<Duration, string> = {
 export const DEFAULT_STAFF_COLOR = '#94a3b8'
 
 /**
+ * Deterministic color palette for staff pills. The Google Sheet the
+ * cashier uses today colors each staff name with a distinct chip
+ * color (Jenny orange, Winnie teal, Aom green, etc.). Owners can
+ * later assign explicit colors via `staff.color`; until then we
+ * derive a stable color from the staff name so the same staff
+ * always renders the same pill across every device + reload.
+ */
+const STAFF_PALETTE: ReadonlyArray<string> = [
+  '#fb923c', // orange-400  → Jenny
+  '#14b8a6', // teal-500    → Winnie
+  '#84cc16', // lime-500    → Aom
+  '#f87171', // red-400     → Yui
+  '#22c55e', // green-500   → Mina
+  '#06b6d4', // cyan-500    → Spy
+  '#a855f7', // purple-500
+  '#ec4899', // pink-500
+  '#f59e0b', // amber-500
+  '#10b981', // emerald-500
+  '#6366f1', // indigo-500
+  '#dc2626', // red-600
+] as const
+
+/**
+ * Hash a staff name to a stable index in `STAFF_PALETTE`. Plain
+ * djb2-style hash — overkill for ~12 buckets but cheap and
+ * dependency-free.
+ */
+function paletteIndexFor(name: string): number {
+  const lc = name.trim().toLowerCase()
+  let h = 5381
+  for (let i = 0; i < lc.length; i++) {
+    h = ((h << 5) + h + lc.charCodeAt(i)) | 0
+  }
+  return Math.abs(h) % STAFF_PALETTE.length
+}
+
+/**
+ * Return a deterministic background color for a staff name. If the
+ * roster carries an explicit color (`staffColors[lc-name]`), prefer
+ * that; otherwise derive one from the palette so the cashier sees a
+ * stable color per staff before any owner customisation.
+ */
+export function deriveStaffColor(
+  staffName: string,
+  staffColors: Record<string, string> = {},
+): string {
+  const key = staffName.trim().toLowerCase()
+  if (!key) return DEFAULT_STAFF_COLOR
+  const explicit = staffColors[key]
+  if (explicit) return explicit
+  return STAFF_PALETTE[paletteIndexFor(key)]
+}
+
+/**
  * Pick a readable foreground (white or near-black slate-900) for
  * the given background hex. Uses the standard relative-luminance
  * formula (no gamma correction — fast enough at render time and

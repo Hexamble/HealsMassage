@@ -494,26 +494,26 @@ export default function SessionTable() {
           </div>
         </div>
       </header>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/40">
+      <div className="overflow-x-auto max-h-[calc(100vh-360px)] overflow-y-auto">
+        <table className="min-w-full text-xs">
+          <thead className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/40 sticky top-0 z-10">
             <tr>
-              <th className="px-2 py-2 text-right">#</th>
-              <th className="px-2 py-2 text-right">Price</th>
-              <th className="px-2 py-2 text-left">Staff</th>
-              <th className="px-2 py-2 text-left">Course</th>
-              <th className="px-2 py-2 text-left">Dur</th>
-              <th className="px-2 py-2 text-left">Time-in</th>
-              <th className="px-2 py-2 text-left">Time-out</th>
-              <th className="px-2 py-2 text-right">Add-on</th>
-              <th className="px-2 py-2 text-right">Comm.</th>
-              <th className="px-2 py-2 text-left">Method</th>
-              <th className="px-2 py-2 text-right">Cash</th>
-              <th className="px-2 py-2 text-right">QR</th>
-              <th className="px-2 py-2 text-right">Credit</th>
-              <th className="px-2 py-2 text-left">Balm / Book</th>
-              <th className="px-2 py-2 text-left">Comment</th>
-              <th className="px-2 py-2"> </th>
+              <th className="px-1 py-1.5 text-right">#</th>
+              <th className="px-1 py-1.5 text-right">Price</th>
+              <th className="px-1 py-1.5 text-left">Staff</th>
+              <th className="px-1 py-1.5 text-left">Course</th>
+              <th className="px-1 py-1.5 text-left">Dur</th>
+              <th className="px-1 py-1.5 text-left">In</th>
+              <th className="px-1 py-1.5 text-left">Out</th>
+              <th className="px-1 py-1.5 text-right">Add</th>
+              <th className="px-1 py-1.5 text-right">Comm.</th>
+              <th className="px-1 py-1.5 text-left">Method</th>
+              <th className="px-1 py-1.5 text-right">Cash</th>
+              <th className="px-1 py-1.5 text-right">QR</th>
+              <th className="px-1 py-1.5 text-right">Credit</th>
+              <th className="px-1 py-1.5 text-left">Balm/Book</th>
+              <th className="px-1 py-1.5 text-left">Comment</th>
+              <th className="px-1 py-1.5"> </th>
             </tr>
           </thead>
           <tbody>
