@@ -136,7 +136,7 @@ export default function ComboBox({
       width: Math.max(rect.width, 160),
       zIndex: 9999,
     })
-  }, [open])
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close on outside click. We track a containerRef around input + list
   // so a click on a list item doesn't blur-close before the click fires.

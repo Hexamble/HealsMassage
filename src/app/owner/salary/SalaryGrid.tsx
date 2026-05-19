@@ -64,7 +64,7 @@ function EditableCell({
   const [isPending, startTransition] = useTransition()
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const bgClass = isToday ? 'bg-teal-50' : ''
+  const bgClass = isToday ? 'bg-teal-50 dark:bg-teal-900/30' : ''
 
   const handleClick = useCallback(() => {
     if (!editMode) return
@@ -98,13 +98,13 @@ function EditableCell({
 
   if (editing) {
     return (
-      <td className={`border border-zinc-200 px-1 py-0.5 text-right ${bgClass}`}>
+      <td className={`border border-zinc-200 dark:border-zinc-700 px-1 py-0.5 text-right ${bgClass}`}>
         <input
           ref={inputRef}
           type="number"
           min="0"
           step="1"
-          className="w-full text-xs text-right bg-white border border-blue-400 rounded px-0.5 py-0 outline-none"
+          className="w-full text-xs text-right bg-white dark:bg-zinc-900 border border-blue-400 rounded px-0.5 py-0 outline-none"
           value={localValue}
           onChange={(e) => setLocalValue(e.target.value)}
           onBlur={handleSave}
@@ -117,7 +117,7 @@ function EditableCell({
 
   return (
     <td
-      className={`border border-zinc-200 px-1 py-0.5 text-right text-xs tabular-nums ${editMode ? 'cursor-pointer hover:bg-blue-50' : ''} ${bgClass} ${isPending ? 'opacity-50' : ''}`}
+      className={`border border-zinc-200 dark:border-zinc-700 px-1 py-0.5 text-right text-xs tabular-nums ${editMode ? 'cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/30' : ''} ${bgClass} ${isPending ? 'opacity-50' : ''}`}
       onClick={handleClick}
     >
       {displayValue ? displayValue : ''}
@@ -142,7 +142,7 @@ export default function SalaryGrid({ sections, dayHeaders, today }: Props) {
             'rounded-md border px-4 py-1.5 text-sm font-medium transition-colors',
             editMode
               ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100'
-              : 'border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50',
+              : 'border-zinc-300 bg-white dark:bg-zinc-900 text-zinc-700 hover:bg-zinc-50 dark:bg-zinc-800',
           ].join(' ')}
         >
           {editMode ? '✓ Done editing' : '✏ Edit'}
@@ -152,9 +152,9 @@ export default function SalaryGrid({ sections, dayHeaders, today }: Props) {
       {sections.map((section) => (
         <section
           key={section.branch}
-          className="border border-zinc-200 rounded-lg bg-white overflow-hidden"
+          className="border border-zinc-200 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-900 overflow-hidden"
         >
-          <header className="px-3 py-2 border-b border-zinc-200 bg-zinc-50">
+          <header className="px-3 py-2 border-b border-zinc-200 bg-zinc-50 dark:bg-zinc-800">
             <h2 className="text-sm font-semibold uppercase tracking-wide">
               {section.branch}
             </h2>
@@ -164,35 +164,35 @@ export default function SalaryGrid({ sections, dayHeaders, today }: Props) {
               <thead>
                 {/* Day-of-week row */}
                 <tr className="border-b border-zinc-100">
-                  <th className="sticky left-0 z-10 bg-white border border-zinc-200 px-2 py-1 text-left w-20" />
+                  <th className="sticky left-0 z-10 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-left w-20" />
                   {dayHeaders.map((h) => (
                     <th
                       key={h.date + '-dow'}
-                      className={`border border-zinc-200 px-1 py-0.5 text-center font-medium text-[10px] uppercase text-zinc-500 ${h.date === today ? 'bg-teal-50' : ''}`}
+                      className={`border border-zinc-200 dark:border-zinc-700 px-1 py-0.5 text-center font-medium text-[10px] uppercase text-zinc-500 ${h.date === today ? 'bg-teal-50 dark:bg-teal-900/30' : ''}`}
                     >
                       {h.dayOfWeek}
                     </th>
                   ))}
-                  <th className="border border-zinc-200 px-2 py-0.5 text-center font-semibold text-[10px] uppercase text-zinc-600">
+                  <th className="border border-zinc-200 dark:border-zinc-700 px-2 py-0.5 text-center font-semibold text-[10px] uppercase text-zinc-600">
                     TOTAL
                   </th>
-                  <th className="border border-zinc-200 px-2 py-0.5 text-center font-semibold text-[10px] uppercase text-zinc-600 whitespace-nowrap">
+                  <th className="border border-zinc-200 dark:border-zinc-700 px-2 py-0.5 text-center font-semibold text-[10px] uppercase text-zinc-600 whitespace-nowrap">
                     TOTAL+BALM
                   </th>
                 </tr>
                 {/* Day number row */}
                 <tr className="border-b border-zinc-200">
-                  <th className="sticky left-0 z-10 bg-white border border-zinc-200 px-2 py-1 text-left w-20" />
+                  <th className="sticky left-0 z-10 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-left w-20" />
                   {dayHeaders.map((h) => (
                     <th
                       key={h.date + '-num'}
-                      className={`border border-zinc-200 px-1 py-0.5 text-center font-mono text-[10px] text-zinc-500 ${h.date === today ? 'bg-teal-50' : ''}`}
+                      className={`border border-zinc-200 dark:border-zinc-700 px-1 py-0.5 text-center font-mono text-[10px] text-zinc-500 ${h.date === today ? 'bg-teal-50 dark:bg-teal-900/30' : ''}`}
                     >
                       {h.dayNum}
                     </th>
                   ))}
-                  <th className="border border-zinc-200 px-2 py-0.5" />
-                  <th className="border border-zinc-200 px-2 py-0.5" />
+                  <th className="border border-zinc-200 dark:border-zinc-700 px-2 py-0.5" />
+                  <th className="border border-zinc-200 dark:border-zinc-700 px-2 py-0.5" />
                 </tr>
               </thead>
               <tbody>
@@ -212,7 +212,7 @@ export default function SalaryGrid({ sections, dayHeaders, today }: Props) {
       ))}
 
       {sections.length === 0 && (
-        <div className="rounded-lg border border-zinc-200 bg-white p-6 text-sm text-zinc-500">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-6 text-sm text-zinc-500">
           No transactions in this cycle yet.
         </div>
       )}
@@ -239,7 +239,7 @@ function StaffRows({
     <>
       {/* Commission row */}
       <tr className="border-b border-zinc-100">
-        <td className="sticky left-0 z-10 bg-white border border-zinc-200 px-2 py-1 font-bold text-xs whitespace-nowrap">
+        <td className="sticky left-0 z-10 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 px-2 py-1 font-bold text-xs whitespace-nowrap">
           {staff.name}
         </td>
         {dayHeaders.map((h) => {
@@ -255,16 +255,16 @@ function StaffRows({
             />
           )
         })}
-        <td className="border border-zinc-200 px-2 py-1 text-right font-semibold text-xs tabular-nums">
+        <td className="border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-right font-semibold text-xs tabular-nums">
           {staff.totalCommission || ''}
         </td>
-        <td className="border border-zinc-200 px-2 py-1 text-right font-semibold text-xs tabular-nums">
+        <td className="border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-right font-semibold text-xs tabular-nums">
           {staff.totalCommission + staff.totalBalm || ''}
         </td>
       </tr>
       {/* Balm row */}
       <tr className="border-b border-zinc-200">
-        <td className="sticky left-0 z-10 bg-white border border-zinc-200 px-2 py-1 text-xs text-zinc-400 pl-4">
+        <td className="sticky left-0 z-10 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-400 pl-4">
           BALM
         </td>
         {dayHeaders.map((h) => {
@@ -280,10 +280,10 @@ function StaffRows({
             />
           )
         })}
-        <td className="border border-zinc-200 px-2 py-1 text-right text-xs text-zinc-400 tabular-nums">
+        <td className="border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-right text-xs text-zinc-400 tabular-nums">
           {staff.totalBalm || ''}
         </td>
-        <td className="border border-zinc-200 px-2 py-1" />
+        <td className="border border-zinc-200 dark:border-zinc-700 px-2 py-1" />
       </tr>
     </>
   )

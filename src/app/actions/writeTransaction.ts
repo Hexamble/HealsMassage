@@ -328,7 +328,7 @@ export async function writeTransaction(
 
   // 7. Resolve staff -------------------------------------------------------
   const isFreelanceMethod = data.method.trim().toLowerCase() === 'freelance'
-  const isExtra = isExtraMethod(data.method)
+  const _isExtra = isExtraMethod(data.method)
 
   const { data: staffRow, error: staffErr } = await sb
     .from('staff')
@@ -341,11 +341,11 @@ export async function writeTransaction(
 
   let resolvedStaffName = data.staff
   let staffIsFreelance = false
-  let staffId: string | null = null
+  let _staffId: string | null = null
   if (staffRow) {
     resolvedStaffName = String(staffRow.name)
     staffIsFreelance = Boolean(staffRow.is_freelance)
-    staffId = String(staffRow.id)
+    _staffId = String(staffRow.id)
   } else if (isFreelanceMethod) {
     // Freeform freelancer (Req 2.8–2.12). Accept the normalised name; the
     // `Staff_Roster` is left untouched per Req 14.6 — the typed name lives
@@ -366,38 +366,14 @@ export async function writeTransaction(
     }
   }
 
-  // For non-EXTRA, non-Freelance writes on the cashier path with a
-  // matched staff row, also enforce that the staff is on today's
-  // daily_roster for the writing branch (Req 15.2). Owner callers,
-  // EXTRA / Freelance methods, and borrowed staff (home_branch ≠
-  // writing branch) skip this check — borrowed staff are expected to
-  // NOT be on the writing branch's roster.
-  if (
-    !isFreelanceMethod &&
-    !isExtra &&
-    profile.role === 'cashier' &&
-    staffId !== null &&
-    staffRow &&
-    String(staffRow.home_branch) === branch
-  ) {
-    const { data: rosterEntry, error: rosterErr } = await sb
-      .from('daily_roster')
-      .select('id')
-      .eq('branch', branch)
-      .eq('business_date', businessDate)
-      .eq('staff_id', staffId)
-      .maybeSingle()
-    if (rosterErr) {
-      return { ok: false, code: 'DB_ERROR', message: rosterErr.message }
-    }
-    if (!rosterEntry) {
-      return {
-        ok: false,
-        code: 'STAFF_NOT_ON_ROSTER',
-        message: `Staff "${resolvedStaffName}" is not on today's roster at ${branch}`,
-      }
-    }
-  }
+  // Roster check REMOVED. The user's workflow is: type any staff name
+  // freely into the table. The daily_roster is purely for queue display
+  // ordering — it does NOT gate who can be written. Any name (branch
+  // staff, borrowed staff, walk-in freelancer) is accepted. The only
+  // hard gate is: non-freelance method requires the staff to exist in
+  // the `staff` table (resolved above). Borrowed staff from other
+  // branches pass through because we already skip when
+  // home_branch ≠ writing branch.
 
   // 8. Resolve price (caller override > customer-price-table fallback) ----
   // Detect "explicitly provided" by checking the raw input — `transactionSchema`

@@ -158,10 +158,8 @@ export default function QueueBoard() {
             <span className="font-medium flex-1">{entry.staff}</span>
             <span className="text-xs text-zinc-500 tabular-nums">
               {entry.status === 'busy'
-                ? formatCountdown(entry.busyUntil, now)
-                : entry.isNew
-                ? 'new today'
-                : `RM ${entry.todayEarned.toFixed(0)}`}
+                ? `${entry.course ?? ''} (${entry.duration ?? ''}m) ${entry.timeIn ?? ''} → ${entry.busyUntil ?? ''} · ${formatCountdown(entry.busyUntil, now)}`
+                : 'Free'}
             </span>
           </li>
         ))}
@@ -186,5 +184,6 @@ function toQueueRow(tx: TransactionRow) {
     timeIn: tx.timeIn,
     timeOut: tx.timeOut,
     duration: tx.duration,
+    course: tx.course,
   }
 }

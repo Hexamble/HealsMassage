@@ -71,11 +71,14 @@ export interface QueueEntry {
   isNew: boolean
   position: number
   lastEnd?: string
+  /** Current session details (only when busy). */
+  course?: string
+  duration?: number
+  timeIn?: string
 }
 
 export interface QueueRow {
-  // Subset of TransactionRow needed by the queue engine. Decoupling keeps
-  // the queue testable without pulling salary-board types.
+  // Subset of TransactionRow needed by the queue engine.
   staff: string
   branch: Branch
   businessDate: string
@@ -84,6 +87,7 @@ export interface QueueRow {
   timeIn: string | null
   timeOut: string | null
   duration: number
+  course?: string
 }
 
 export interface QueueInput {
@@ -185,6 +189,9 @@ interface RawEntry {
   yesterdayEarned: number
   isNew: boolean
   lastEnd?: string
+  course?: string
+  duration?: number
+  timeIn?: string
 }
 
 /**
@@ -233,6 +240,9 @@ export function buildQueue(input: QueueInput): QueueEntry[] {
 
   // 3. Busy detection + 4. lastEnd tracking from today's rows.
   const busyUntilBy = new Map<string, string>()
+  const busyCourseBy = new Map<string, string>()
+  const busyDurationBy = new Map<string, number>()
+  const busyTimeInBy = new Map<string, string>()
   const lastEndBy = new Map<string, string>()
   for (const row of input.todayRows) {
     const key = row.staff.toLowerCase()
@@ -244,6 +254,9 @@ export function buildQueue(input: QueueInput): QueueEntry[] {
         const existing = busyUntilBy.get(key)
         if (existing === undefined || timeAfterOrEqual(until, existing)) {
           busyUntilBy.set(key, until)
+          busyCourseBy.set(key, (row as { course?: string }).course ?? '')
+          busyDurationBy.set(key, row.duration)
+          busyTimeInBy.set(key, row.timeIn)
         }
       }
     }
@@ -269,7 +282,12 @@ export function buildQueue(input: QueueInput): QueueEntry[] {
       yesterdayEarned,
       isNew: todayEarned === 0,
     }
-    if (busyUntil !== undefined) entry.busyUntil = busyUntil
+    if (busyUntil !== undefined) {
+      entry.busyUntil = busyUntil
+      entry.course = busyCourseBy.get(staffLower)
+      entry.duration = busyDurationBy.get(staffLower)
+      entry.timeIn = busyTimeInBy.get(staffLower)
+    }
     if (lastEnd !== undefined) entry.lastEnd = lastEnd
     return entry
   })
@@ -316,6 +334,9 @@ export function buildQueue(input: QueueInput): QueueEntry[] {
       position: isBusy ? 0 : pos,
     }
     if (e.busyUntil !== undefined) entry.busyUntil = e.busyUntil
+    if (e.course !== undefined) entry.course = e.course
+    if (e.duration !== undefined) entry.duration = e.duration
+    if (e.timeIn !== undefined) entry.timeIn = e.timeIn
     if (e.lastEnd !== undefined) entry.lastEnd = e.lastEnd
     if (!isBusy) pos += 1
     result.push(entry)
