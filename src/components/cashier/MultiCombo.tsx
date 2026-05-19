@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 /**
  * heals-system-rebuild — Heals Thai Massage POS
@@ -257,7 +257,7 @@ export default function MultiCombo({
         <ul
           id={listboxId}
           role="listbox"
-          className="absolute z-30 left-0 right-0 top-full mt-1 max-h-60 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg text-sm"
+          className="absolute z-50 left-0 right-0 top-full mt-1 max-h-60 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg text-sm"
         >
           {filtered.map((opt, index) => {
             const isActive = index === highlight

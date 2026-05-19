@@ -483,7 +483,7 @@ export default function SessionTable() {
   const rowsView = useMemo(() => drafts, [drafts])
 
   return (
-    <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+    <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
       <header className="px-4 py-2.5 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/40">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide">
@@ -494,7 +494,7 @@ export default function SessionTable() {
           </div>
         </div>
       </header>
-      <div className="overflow-x-auto max-h-[calc(100vh-360px)] overflow-y-auto">
+      <div className="overflow-x-auto">
         <table className="min-w-full text-xs">
           <thead className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/40 sticky top-0 z-10">
             <tr>
