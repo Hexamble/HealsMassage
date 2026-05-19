@@ -33,6 +33,7 @@
 // over.
 
 import { notFound } from 'next/navigation'
+import Link from 'next/link'
 
 import {
   BRANCHES,
@@ -48,6 +49,8 @@ import type {
 } from '@/domain/commission'
 import { getBusinessDate } from '@/domain/business-date'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { getCurrentProfile } from '@/lib/profile'
+import ThemeToggle from '@/components/ThemeToggle'
 
 import { CashierProvider } from './CashierContext'
 import ConnectionIndicator from './ConnectionIndicator'
@@ -172,6 +175,8 @@ export default async function CashierPage({
   const branch = params.branch as Branch
   const businessDate = getBusinessDate(new Date())
   const sb = createServerSupabaseClient()
+  const profile = await getCurrentProfile()
+  const isOwner = profile?.role === 'owner'
 
   // Pure UTC date arithmetic for yesterday — no DST/TZ bias.
   const [y, m, d] = businessDate.split('-').map((p) => parseInt(p, 10))
@@ -190,6 +195,7 @@ export default async function CashierPage({
     priceRes,
     rateRes,
     yesterdayRes,
+    rosterRes,
   ] = await Promise.all([
     sb
       .from('transactions')
@@ -218,6 +224,11 @@ export default async function CashierPage({
       .select('*')
       .eq('branch', branch)
       .eq('business_date', yesterday),
+    sb
+      .from('daily_roster')
+      .select('staff_id, staff:staff_id(name)')
+      .eq('branch', branch)
+      .eq('business_date', businessDate),
   ])
 
   const initialTransactions = (
@@ -246,6 +257,16 @@ export default async function CashierPage({
     .filter((r) => r.rateType === 'freelance')
     .map(({ rateType: _t, ...rest }) => rest)
 
+  // Saved daily roster names (from `daily_roster` table). The
+  // QueueBoard uses these — when the cashier picks staff in the
+  // roster modal, those names appear in the queue immediately,
+  // before any session row has been entered.
+  const initialDailyRoster: string[] = (
+    (rosterRes.data ?? []) as Array<{ staff?: { name?: string } | null }>
+  )
+    .map((r) => r.staff?.name ?? '')
+    .filter((n) => n.length > 0)
+
   return (
     <CashierProvider
       branch={branch}
@@ -257,6 +278,7 @@ export default async function CashierPage({
       initialRegularRates={initialRegularRates}
       initialFreelanceRates={initialFreelanceRates}
       initialYesterdayTransactions={initialYesterdayTransactions}
+      initialDailyRoster={initialDailyRoster}
     >
       <div className="mx-auto max-w-[1600px] space-y-4 p-4 sm:p-6">
         <header className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 border-l-8 border-l-[var(--theme-primary)]">
@@ -275,6 +297,24 @@ export default async function CashierPage({
           <div className="flex items-center gap-2">
             <PendingSyncBadge />
             <ConnectionIndicator />
+            {isOwner && (
+              <Link
+                href="/owner"
+                className="text-xs rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-700"
+                title="Back to Boss HQ"
+              >
+                ← Boss HQ
+              </Link>
+            )}
+            <ThemeToggle />
+            <form action="/auth/sign-out" method="post">
+              <button
+                type="submit"
+                className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 px-2"
+              >
+                Sign out
+              </button>
+            </form>
           </div>
         </header>
 

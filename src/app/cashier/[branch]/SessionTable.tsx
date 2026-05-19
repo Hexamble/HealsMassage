@@ -496,25 +496,22 @@ export default function SessionTable() {
       </header>
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
-          <thead className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+          <thead className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/40">
             <tr>
               <th className="px-2 py-2 text-right">#</th>
+              <th className="px-2 py-2 text-right">Price</th>
               <th className="px-2 py-2 text-left">Staff</th>
               <th className="px-2 py-2 text-left">Course</th>
               <th className="px-2 py-2 text-left">Dur</th>
+              <th className="px-2 py-2 text-left">Time-in</th>
+              <th className="px-2 py-2 text-left">Time-out</th>
+              <th className="px-2 py-2 text-right">Add-on</th>
+              <th className="px-2 py-2 text-right">Comm.</th>
               <th className="px-2 py-2 text-left">Method</th>
-              <th className="px-2 py-2 text-left">In</th>
-              <th className="px-2 py-2 text-left">Out</th>
               <th className="px-2 py-2 text-right">Cash</th>
               <th className="px-2 py-2 text-right">QR</th>
               <th className="px-2 py-2 text-right">Credit</th>
-              <th className="px-2 py-2 text-right">Price</th>
-              <th className="px-2 py-2 text-right">Addon</th>
-              <th className="px-2 py-2 text-left">Flags</th>
-              <th className="px-2 py-2 text-right">Base</th>
-              <th className="px-2 py-2 text-right">Balm</th>
-              <th className="px-2 py-2 text-right">Book</th>
-              <th className="px-2 py-2 text-right">Total</th>
+              <th className="px-2 py-2 text-left">Balm / Book</th>
               <th className="px-2 py-2 text-left">Comment</th>
               <th className="px-2 py-2"> </th>
             </tr>

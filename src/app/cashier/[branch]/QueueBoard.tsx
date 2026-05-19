@@ -61,13 +61,16 @@ function nowKL(): string {
 }
 
 export default function QueueBoard() {
-  const { transactions, yesterdayTransactions, businessDate, branch } =
+  const { transactions, yesterdayTransactions, dailyRoster, businessDate, branch } =
     useCashier()
 
-  // Derive today's roster from the first 7 distinct staff names that
-  // appear on the table — those are the "queue order" the user sets
-  // up first thing in the morning.
+  // Source of truth for "who is working today":
+  //   1. Saved daily_roster (managed via the RosterPanel modal).
+  //   2. Otherwise the first 7 distinct staff names typed in the
+  //      table — supports the legacy Sheet workflow where you set the
+  //      queue order by typing names in the top of the table.
   const todayRoster = useMemo(() => {
+    if (dailyRoster.length > 0) return dailyRoster
     const seen = new Set<string>()
     const names: string[] = []
     const sorted = [...transactions].sort(
@@ -83,7 +86,7 @@ export default function QueueBoard() {
       if (names.length >= TOP_ROSTER_SIZE) break
     }
     return names
-  }, [transactions])
+  }, [transactions, dailyRoster])
 
   // Yesterday's rows feed the secondary tie-break ("whoever earned
   // less yesterday goes higher today" — the swap rule). The page
@@ -116,7 +119,8 @@ export default function QueueBoard() {
   if (queue.length === 0) {
     return (
       <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 text-sm text-zinc-500">
-        Type staff names in the table to set today&apos;s queue order.
+        Set today&apos;s roster (top-right of the page) or type staff names in
+        the table to start the queue.
       </section>
     )
   }

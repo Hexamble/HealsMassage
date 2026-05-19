@@ -173,7 +173,7 @@ export default function ExpenseBlock() {
                         e.target.value as (typeof METHOD_OPTIONS)[number],
                       )
                     }
-                    className="bg-transparent border-0 outline-0 px-1 py-1 text-sm focus:ring-2 focus:ring-[var(--theme-primary)] focus:rounded"
+                    className="bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
                   >
                     {METHOD_OPTIONS.map((m) => (
                       <option key={m} value={m}>

@@ -124,7 +124,7 @@ export default function MultiCombo({
     onCommit?.(next)
   }
 
-  function addToken(t: string) {
+  function addToken(t: string, keepOpen = true) {
     const trimmed = t.trim()
     if (!trimmed) return
     if (
@@ -150,6 +150,13 @@ export default function MultiCombo({
     }
     setDraft('')
     setHighlight(-1)
+    if (keepOpen) {
+      // Keep the dropdown open so the cashier can pick another flag
+      // without re-clicking the cell.
+      setOpen(true)
+      // Refocus so keyboard nav still works.
+      setTimeout(() => inputRef.current?.focus(), 0)
+    }
   }
 
   function removeToken(idx: number) {
@@ -193,7 +200,7 @@ export default function MultiCombo({
   return (
     <div
       ref={containerRef}
-      className={`relative flex flex-wrap items-center gap-1 px-1 py-1 min-h-[34px] cursor-text ${
+      className={`relative flex flex-wrap items-center gap-1 px-2 py-1 min-h-[34px] cursor-text bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 rounded-md focus-within:ring-2 focus-within:ring-[var(--theme-primary)] focus-within:border-[var(--theme-primary)] ${
         className ?? ''
       }`}
       onClick={() => {
@@ -206,7 +213,7 @@ export default function MultiCombo({
       {tokens.map((t, i) => (
         <span
           key={`${t}-${i}`}
-          className="inline-flex items-center gap-1 rounded-full border border-zinc-300 dark:border-zinc-600 bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-xs"
+          className="inline-flex items-center gap-1 rounded-full border border-[var(--theme-primary)] bg-[var(--theme-accent)]/20 text-zinc-900 dark:text-zinc-100 px-2 py-0.5 text-xs"
         >
           {t}
           <button
@@ -242,7 +249,7 @@ export default function MultiCombo({
         onFocus={() => setOpen(true)}
         onKeyDown={handleKeyDown}
         className={[
-          'flex-1 min-w-[6ch] bg-transparent border-0 outline-0 px-1 py-0.5 text-sm',
+          'flex-1 min-w-[6ch] bg-transparent text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border-0 outline-0 px-1 py-0.5 text-sm',
           inputClassName ?? '',
         ].join(' ')}
       />

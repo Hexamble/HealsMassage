@@ -231,8 +231,8 @@ export default function ComboBox({
         }}
         onKeyDown={handleKeyDown}
         className={[
-          'w-full bg-transparent border-0 outline-0 px-2 py-1.5 text-sm',
-          'focus:ring-2 focus:ring-[var(--theme-primary)] focus:rounded',
+          'w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-2 py-1.5 text-sm',
+          'focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)] focus:border-[var(--theme-primary)]',
           inputClassName ?? '',
         ].join(' ')}
       />

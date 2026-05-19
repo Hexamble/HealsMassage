@@ -197,14 +197,11 @@ export function isSaveable(d: DraftRow): boolean {
 // ---------------------------------------------------------------------------
 
 function buildStaffOptions(roster: StaffMember[]): ComboBoxOption[] {
-  // Branch staff first, then freelancers — visually grouped.
-  const branchStaff = roster
+  // Branch staff only — freelancers are walk-ins typed by the cashier
+  // (per the user's note: "freelance can be nobody we don't know").
+  return roster
     .filter((s) => !s.isFreelance && s.isActive)
-    .map((s) => ({ value: s.name, group: 'Branch staff' }))
-  const freelancers = roster
-    .filter((s) => s.isFreelance && s.isActive)
-    .map((s) => ({ value: s.name, group: 'Freelancers' }))
-  return [...branchStaff, ...freelancers]
+    .map((s) => ({ value: s.name }))
 }
 
 const COURSE_OPTIONS: ComboBoxOption[] = COURSES.map((c) => ({ value: c }))
@@ -344,6 +341,29 @@ export default function SessionRow({
     }
   }, [partsKey, row, onChange])
 
+  // Auto-fill Time Out from Time In + Duration whenever Time In is set
+  // and duration is one of the standard slots. The cashier can still
+  // override Time Out by typing — once they do, the override sticks
+  // until they clear Time In.
+  const timeOutKey = `${row.timeIn}|${row.duration}`
+  const lastTimeOutKey = useRef<string | null>(null)
+  useEffect(() => {
+    if (lastTimeOutKey.current === timeOutKey) return
+    lastTimeOutKey.current = timeOutKey
+    const m = /^(\d{1,2}):(\d{2})$/.exec(row.timeIn.trim())
+    if (!m) return
+    const dur = num(row.duration)
+    if (![30, 60, 90, 120].includes(dur)) return
+    const startMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10)
+    const endMin = Math.min(startMin + dur, 23 * 60 + 59)
+    const hh = String(Math.floor(endMin / 60)).padStart(2, '0')
+    const mm = String(endMin % 60).padStart(2, '0')
+    const computed = `${hh}:${mm}`
+    if (row.timeOut !== computed) {
+      onChange({ ...row, timeOut: computed })
+    }
+  }, [timeOutKey, row, onChange])
+
   function patch(field: keyof DraftRow, value: unknown) {
     onChange({ ...row, [field]: value })
   }
@@ -389,6 +409,14 @@ export default function SessionRow({
       <td className="px-2 py-1 text-xs text-zinc-500 align-middle text-right tabular-nums">
         {row.cashierRowNumber}
       </td>
+      <NumberCell
+        label="Price"
+        value={row.price}
+        readOnly={readOnly}
+        accent={!row.overrides.price}
+        onChange={(v) => setOverride('price', v)}
+        onCommit={commit}
+      />
       <td className="px-1 py-0 align-middle min-w-[140px]">
         <ComboBox
           ariaLabel="Staff"
@@ -425,17 +453,6 @@ export default function SessionRow({
           onCommit={() => commit()}
         />
       </td>
-      <td className="px-1 py-0 align-middle min-w-[110px]">
-        <ComboBox
-          ariaLabel="Method"
-          value={row.method}
-          options={METHOD_OPTIONS}
-          placeholder="CASH"
-          disabled={readOnly}
-          onChange={(v) => patch('method', v)}
-          onCommit={() => commit()}
-        />
-      </td>
       <td className="px-1 py-0 align-middle">
         <input
           type="text"
@@ -445,7 +462,7 @@ export default function SessionRow({
           disabled={readOnly}
           onChange={(e) => patch('timeIn', e.target.value)}
           onBlur={commit}
-          className="w-[70px] bg-transparent border-0 outline-0 px-2 py-1.5 text-sm focus:ring-2 focus:ring-[var(--theme-primary)] focus:rounded"
+          className="w-[70px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
         />
       </td>
       <td className="px-1 py-0 align-middle">
@@ -453,11 +470,38 @@ export default function SessionRow({
           type="text"
           aria-label="Time out"
           value={row.timeOut}
-          placeholder="HH:mm"
+          placeholder="auto"
           disabled={readOnly}
           onChange={(e) => patch('timeOut', e.target.value)}
           onBlur={commit}
-          className="w-[70px] bg-transparent border-0 outline-0 px-2 py-1.5 text-sm focus:ring-2 focus:ring-[var(--theme-primary)] focus:rounded"
+          className="w-[70px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
+        />
+      </td>
+      <NumberCell
+        label="Add-on"
+        value={row.addon}
+        readOnly={readOnly}
+        onChange={(v) => patch('addon', v)}
+        onCommit={commit}
+      />
+      <NumberCell
+        label="Total commission"
+        value={row.totalCommission}
+        readOnly={readOnly}
+        accent={!row.overrides.total}
+        bold
+        onChange={(v) => setOverride('total', v)}
+        onCommit={commit}
+      />
+      <td className="px-1 py-0 align-middle min-w-[110px]">
+        <ComboBox
+          ariaLabel="Method"
+          value={row.method}
+          options={METHOD_OPTIONS}
+          placeholder="CASH"
+          disabled={readOnly}
+          onChange={(v) => patch('method', v)}
+          onCommit={() => commit()}
         />
       </td>
       <NumberCell
@@ -491,21 +535,6 @@ export default function SessionRow({
         }
         onCommit={commit}
       />
-      <NumberCell
-        label="Price"
-        value={row.price}
-        readOnly={readOnly}
-        accent={!row.overrides.price}
-        onChange={(v) => setOverride('price', v)}
-        onCommit={commit}
-      />
-      <NumberCell
-        label="Addon"
-        value={row.addon}
-        readOnly={readOnly}
-        onChange={(v) => patch('addon', v)}
-        onCommit={commit}
-      />
       <td className="px-1 py-0 align-middle min-w-[180px]">
         <MultiCombo
           ariaLabel="Flags"
@@ -517,39 +546,6 @@ export default function SessionRow({
           onCommit={() => commit()}
         />
       </td>
-      <NumberCell
-        label="Base commission"
-        value={row.baseCommission}
-        readOnly={readOnly}
-        accent={!row.overrides.base}
-        onChange={(v) => setOverride('base', v)}
-        onCommit={commit}
-      />
-      <NumberCell
-        label="Balm bonus"
-        value={row.balmBonus}
-        readOnly={readOnly}
-        accent={!row.overrides.balm}
-        onChange={(v) => setOverride('balm', v)}
-        onCommit={commit}
-      />
-      <NumberCell
-        label="Booking bonus"
-        value={row.bookingBonus}
-        readOnly={readOnly}
-        accent={!row.overrides.book}
-        onChange={(v) => setOverride('book', v)}
-        onCommit={commit}
-      />
-      <NumberCell
-        label="Total"
-        value={row.totalCommission}
-        readOnly={readOnly}
-        accent={!row.overrides.total}
-        bold
-        onChange={(v) => setOverride('total', v)}
-        onCommit={commit}
-      />
       <td className="px-1 py-0 align-middle min-w-[120px]">
         <input
           type="text"
@@ -559,7 +555,7 @@ export default function SessionRow({
           disabled={readOnly}
           onChange={(e) => patch('comment', e.target.value)}
           onBlur={commit}
-          className="w-full bg-transparent border-0 outline-0 px-2 py-1.5 text-sm focus:ring-2 focus:ring-[var(--theme-primary)] focus:rounded"
+          className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
         />
       </td>
       <td className="px-1 py-0 align-middle text-right">
@@ -628,8 +624,8 @@ function NumberCell({
         }}
         onBlur={onCommit}
         className={[
-          'w-[80px] bg-transparent border-0 outline-0 px-2 py-1.5 text-sm text-right tabular-nums',
-          'focus:ring-2 focus:ring-[var(--theme-primary)] focus:rounded',
+          'w-[80px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 rounded-md px-2 py-1.5 text-sm text-right tabular-nums',
+          'focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)] focus:border-[var(--theme-primary)]',
           accent ? 'text-zinc-500 dark:text-zinc-400' : '',
           bold ? 'font-semibold' : '',
         ].join(' ')}

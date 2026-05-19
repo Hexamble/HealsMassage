@@ -107,6 +107,13 @@ export interface CashierContextValue {
   yesterdayTransactions: TransactionRow[]
   /** Active staff for the branch + freelancers across branches. */
   roster: StaffMember[]
+  /**
+   * Names of the staff saved in `daily_roster` for today (set via the
+   * RosterPanel's "Manage roster" picker). The QueueBoard uses this
+   * directly so the queue shows the moment the cashier saves the
+   * roster — even before any session row has been typed.
+   */
+  dailyRoster: string[]
   /** Full price table (current + Bishop FR -2 already encoded). */
   prices: ReadonlyArray<PriceRow>
   /** Regular commission rates with effective_from versioning. */
@@ -146,6 +153,8 @@ export interface CashierContextValue {
   refreshAll: () => Promise<void>
   /** Force the offline-sync worker to drain right now. */
   drainOfflineNow: () => Promise<void>
+  /** Update the saved daily roster names locally (after picker save). */
+  setDailyRoster: (names: string[]) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +248,8 @@ export interface CashierProviderProps {
   initialFreelanceRates: ReadonlyArray<FreelanceRateRow>
   /** Optional yesterday transactions for queue tie-break. Default: `[]`. */
   initialYesterdayTransactions?: TransactionRow[]
+  /** Optional saved daily roster names for today. Default: `[]`. */
+  initialDailyRoster?: string[]
   readOnly?: boolean
   children: ReactNode
 }
@@ -254,6 +265,7 @@ export function CashierProvider(props: CashierProviderProps) {
     initialRegularRates,
     initialFreelanceRates,
     initialYesterdayTransactions = [],
+    initialDailyRoster = [],
     readOnly = false,
     children,
   } = props
@@ -267,6 +279,7 @@ export function CashierProvider(props: CashierProviderProps) {
     initialYesterdayTransactions,
   )
   const [roster] = useState(initialRoster)
+  const [dailyRoster, setDailyRoster] = useState<string[]>(initialDailyRoster)
   const [prices] = useState(initialPrices)
   const [regularRates] = useState(initialRegularRates)
   const [freelanceRates] = useState(initialFreelanceRates)
@@ -493,6 +506,7 @@ export function CashierProvider(props: CashierProviderProps) {
       expenses,
       yesterdayTransactions,
       roster,
+      dailyRoster,
       prices,
       regularRates,
       freelanceRates,
@@ -508,6 +522,7 @@ export function CashierProvider(props: CashierProviderProps) {
       addOptimisticExpense,
       replaceOptimisticExpense,
       removeOptimisticExpense,
+      setDailyRoster,
       refreshAll,
       drainOfflineNow,
     }),
@@ -518,6 +533,7 @@ export function CashierProvider(props: CashierProviderProps) {
       expenses,
       yesterdayTransactions,
       roster,
+      dailyRoster,
       prices,
       regularRates,
       freelanceRates,
