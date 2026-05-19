@@ -39,6 +39,7 @@
  */
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 export interface ComboBoxOption {
   /** Persisted token (what gets stored on the row). */
@@ -123,14 +124,29 @@ export default function ComboBox({
     return options.filter((opt) => matches(opt, draft))
   }, [options, draft])
 
+  // Track input position for fixed-position dropdown.
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
+  useEffect(() => {
+    if (!open || !inputRef.current) return
+    const rect = inputRef.current.getBoundingClientRect()
+    setDropdownStyle({
+      position: 'fixed',
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: Math.max(rect.width, 160),
+      zIndex: 9999,
+    })
+  }, [open])
+
   // Close on outside click. We track a containerRef around input + list
   // so a click on a list item doesn't blur-close before the click fires.
   const containerRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
   useEffect(() => {
     if (!open) return
     function onDocClick(e: MouseEvent) {
-      if (!containerRef.current) return
-      if (containerRef.current.contains(e.target as Node)) return
+      if (containerRef.current?.contains(e.target as Node)) return
+      if (listRef.current?.contains(e.target as Node)) return
       setOpen(false)
       setHighlight(-1)
     }
@@ -260,61 +276,65 @@ export default function ComboBox({
           inputClassName ?? '',
         ].join(' ')}
       />
-      {open && filtered.length > 0 && (
-        <ul
-          id={listboxId}
-          role="listbox"
-          className="absolute z-50 left-0 right-0 mt-1 max-h-60 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg text-sm"
-        >
-          {grouped.map((entry, i) => {
-            if (entry.kind === 'header') {
+      {open && filtered.length > 0 && typeof document !== 'undefined' &&
+        createPortal(
+          <ul
+            ref={listRef}
+            id={listboxId}
+            role="listbox"
+            style={dropdownStyle}
+            className="max-h-60 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg text-sm"
+          >
+            {grouped.map((entry, i) => {
+              if (entry.kind === 'header') {
+                return (
+                  <li
+                    key={`h-${i}`}
+                    className="px-2 py-1 text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-800/50"
+                  >
+                    {entry.label}
+                  </li>
+                )
+              }
+              const isActive = entry.index === highlight
               return (
                 <li
-                  key={`h-${i}`}
-                  className="px-2 py-1 text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-800/50"
+                  key={`o-${entry.opt.value}-${entry.index}`}
+                  role="option"
+                  aria-selected={isActive}
+                  onMouseEnter={() => setHighlight(entry.index)}
+                  onMouseDown={(e) => {
+                    // mousedown (not click) so we fire before the input's blur.
+                    e.preventDefault()
+                    commit(entry.opt.value)
+                  }}
+                  className={[
+                    'px-2 py-1.5 cursor-pointer',
+                    isActive
+                      ? 'bg-[var(--theme-accent)]/30 text-zinc-900 dark:text-zinc-50'
+                      : 'hover:bg-zinc-100 dark:hover:bg-zinc-800',
+                  ].join(' ')}
                 >
-                  {entry.label}
+                  {labelOf(entry.opt)}
                 </li>
               )
-            }
-            const isActive = entry.index === highlight
-            return (
+            })}
+            {freeText && draft && !filtered.some((o) => o.value === draft) && (
               <li
-                key={`o-${entry.opt.value}-${entry.index}`}
                 role="option"
-                aria-selected={isActive}
-                onMouseEnter={() => setHighlight(entry.index)}
+                aria-selected={false}
                 onMouseDown={(e) => {
-                  // mousedown (not click) so we fire before the input's blur.
                   e.preventDefault()
-                  commit(entry.opt.value)
+                  commit(draft)
                 }}
-                className={[
-                  'px-2 py-1.5 cursor-pointer',
-                  isActive
-                    ? 'bg-[var(--theme-accent)]/30 text-zinc-900 dark:text-zinc-50'
-                    : 'hover:bg-zinc-100 dark:hover:bg-zinc-800',
-                ].join(' ')}
+                className="px-2 py-1.5 cursor-pointer border-t border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 italic hover:bg-zinc-100 dark:hover:bg-zinc-800"
               >
-                {labelOf(entry.opt)}
+                Use &quot;{draft}&quot;
               </li>
-            )
-          })}
-          {freeText && draft && !filtered.some((o) => o.value === draft) && (
-            <li
-              role="option"
-              aria-selected={false}
-              onMouseDown={(e) => {
-                e.preventDefault()
-                commit(draft)
-              }}
-              className="px-2 py-1.5 cursor-pointer border-t border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 italic hover:bg-zinc-100 dark:hover:bg-zinc-800"
-            >
-              Use &quot;{draft}&quot;
-            </li>
-          )}
-        </ul>
-      )}
+            )}
+          </ul>,
+          document.body,
+        )}
     </div>
   )
 }

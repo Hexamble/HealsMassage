@@ -35,6 +35,7 @@
  */
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import type { ComboBoxOption } from './ComboBox'
 
@@ -106,17 +107,34 @@ export default function MultiCombo({
     })
   }, [options, tokens, draft])
 
+  // Track input position for fixed-position dropdown.
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
+  useEffect(() => {
+    if (!open || !containerRef.current) return
+    const rect = containerRef.current.getBoundingClientRect()
+    setDropdownStyle({
+      position: 'fixed',
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: Math.max(rect.width, 160),
+      zIndex: 9999,
+    })
+  }, [open])
+
   useEffect(() => {
     if (!open) return
     function onDocClick(e: MouseEvent) {
       if (!containerRef.current) return
       if (containerRef.current.contains(e.target as Node)) return
+      // Also check the portal dropdown
+      const portal = document.getElementById(listboxId)
+      if (portal?.contains(e.target as Node)) return
       setOpen(false)
       setHighlight(-1)
     }
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
-  }, [open])
+  }, [open, listboxId])
 
   function commitTokens(nextTokens: ReadonlyArray<string>) {
     const next = joinTokens(nextTokens)
@@ -253,52 +271,55 @@ export default function MultiCombo({
           inputClassName ?? '',
         ].join(' ')}
       />
-      {open && (filtered.length > 0 || (freeText && draft.trim())) && (
-        <ul
-          id={listboxId}
-          role="listbox"
-          className="absolute z-50 left-0 right-0 top-full mt-1 max-h-60 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg text-sm"
-        >
-          {filtered.map((opt, index) => {
-            const isActive = index === highlight
-            return (
+      {open && (filtered.length > 0 || (freeText && draft.trim())) && typeof document !== 'undefined' &&
+        createPortal(
+          <ul
+            id={listboxId}
+            role="listbox"
+            style={dropdownStyle}
+            className="max-h-60 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg text-sm"
+          >
+            {filtered.map((opt, index) => {
+              const isActive = index === highlight
+              return (
+                <li
+                  key={`o-${opt.value}-${index}`}
+                  role="option"
+                  aria-selected={isActive}
+                  onMouseEnter={() => setHighlight(index)}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    addToken(opt.value)
+                  }}
+                  className={[
+                    'px-2 py-1.5 cursor-pointer',
+                    isActive
+                      ? 'bg-[var(--theme-accent)]/30 text-zinc-900 dark:text-zinc-50'
+                      : 'hover:bg-zinc-100 dark:hover:bg-zinc-800',
+                  ].join(' ')}
+                >
+                  {labelOf(opt)}
+                </li>
+              )
+            })}
+            {freeText && draft.trim() && !filtered.some(
+              (o) => o.value.toLowerCase() === draft.trim().toLowerCase(),
+            ) && (
               <li
-                key={`o-${opt.value}-${index}`}
                 role="option"
-                aria-selected={isActive}
-                onMouseEnter={() => setHighlight(index)}
+                aria-selected={false}
                 onMouseDown={(e) => {
                   e.preventDefault()
-                  addToken(opt.value)
+                  addToken(draft)
                 }}
-                className={[
-                  'px-2 py-1.5 cursor-pointer',
-                  isActive
-                    ? 'bg-[var(--theme-accent)]/30 text-zinc-900 dark:text-zinc-50'
-                    : 'hover:bg-zinc-100 dark:hover:bg-zinc-800',
-                ].join(' ')}
+                className="px-2 py-1.5 cursor-pointer border-t border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 italic hover:bg-zinc-100 dark:hover:bg-zinc-800"
               >
-                {labelOf(opt)}
+                Add &quot;{draft.trim()}&quot;
               </li>
-            )
-          })}
-          {freeText && draft.trim() && !filtered.some(
-            (o) => o.value.toLowerCase() === draft.trim().toLowerCase(),
-          ) && (
-            <li
-              role="option"
-              aria-selected={false}
-              onMouseDown={(e) => {
-                e.preventDefault()
-                addToken(draft)
-              }}
-              className="px-2 py-1.5 cursor-pointer border-t border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 italic hover:bg-zinc-100 dark:hover:bg-zinc-800"
-            >
-              Add &quot;{draft.trim()}&quot;
-            </li>
-          )}
-        </ul>
-      )}
+            )}
+          </ul>,
+          document.body,
+        )}
     </div>
   )
 }

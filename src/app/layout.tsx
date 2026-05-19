@@ -62,6 +62,17 @@ function isTheme(value: unknown): value is Theme {
  */
 async function getInitialTheme(): Promise<Theme> {
   try {
+    // Skip the DB round-trip entirely when there's no auth cookie.
+    // The cookies() call is cheap (reads from the request headers);
+    // only proceed to getUser() + user_preferences query when a
+    // session cookie is present.
+    const { cookies } = await import('next/headers')
+    const cookieStore = cookies()
+    const hasSession = cookieStore.getAll().some(
+      (c) => c.name.startsWith('sb-') && c.name.endsWith('-auth-token'),
+    )
+    if (!hasSession) return 'system'
+
     const sb = createServerClient()
     const {
       data: { user },

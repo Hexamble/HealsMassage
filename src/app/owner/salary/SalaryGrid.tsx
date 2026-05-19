@@ -50,11 +50,13 @@ function EditableCell({
   txId,
   field,
   isToday,
+  editMode,
 }: {
   value: number
   txId: string | null
   field: 'baseCommission' | 'balmBonus'
   isToday: boolean
+  editMode: boolean
 }) {
   const [editing, setEditing] = useState(false)
   const [localValue, setLocalValue] = useState('')
@@ -65,10 +67,11 @@ function EditableCell({
   const bgClass = isToday ? 'bg-teal-50' : ''
 
   const handleClick = useCallback(() => {
+    if (!editMode) return
     setLocalValue(displayValue ? String(displayValue) : '')
     setEditing(true)
     setTimeout(() => inputRef.current?.select(), 0)
-  }, [displayValue])
+  }, [displayValue, editMode])
 
   const handleSave = useCallback(() => {
     setEditing(false)
@@ -114,7 +117,7 @@ function EditableCell({
 
   return (
     <td
-      className={`border border-zinc-200 px-1 py-0.5 text-right text-xs tabular-nums cursor-pointer hover:bg-blue-50 ${bgClass} ${isPending ? 'opacity-50' : ''}`}
+      className={`border border-zinc-200 px-1 py-0.5 text-right text-xs tabular-nums ${editMode ? 'cursor-pointer hover:bg-blue-50' : ''} ${bgClass} ${isPending ? 'opacity-50' : ''}`}
       onClick={handleClick}
     >
       {displayValue ? displayValue : ''}
@@ -127,8 +130,25 @@ function EditableCell({
 // ---------------------------------------------------------------------------
 
 export default function SalaryGrid({ sections, dayHeaders, today }: Props) {
+  const [editMode, setEditMode] = useState(false)
+
   return (
     <div className="space-y-6">
+      <div className="flex items-center justify-end">
+        <button
+          type="button"
+          onClick={() => setEditMode((v) => !v)}
+          className={[
+            'rounded-md border px-4 py-1.5 text-sm font-medium transition-colors',
+            editMode
+              ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100'
+              : 'border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50',
+          ].join(' ')}
+        >
+          {editMode ? '✓ Done editing' : '✏ Edit'}
+        </button>
+      </div>
+
       {sections.map((section) => (
         <section
           key={section.branch}
@@ -182,6 +202,7 @@ export default function SalaryGrid({ sections, dayHeaders, today }: Props) {
                     staff={s}
                     dayHeaders={dayHeaders}
                     today={today}
+                    editMode={editMode}
                   />
                 ))}
               </tbody>
@@ -207,10 +228,12 @@ function StaffRows({
   staff,
   dayHeaders,
   today,
+  editMode,
 }: {
   staff: StaffRow
   dayHeaders: DayHeader[]
   today: string
+  editMode: boolean
 }) {
   return (
     <>
@@ -228,6 +251,7 @@ function StaffRows({
               txId={dayData?.txId ?? null}
               field="baseCommission"
               isToday={h.date === today}
+              editMode={editMode}
             />
           )
         })}
@@ -252,6 +276,7 @@ function StaffRows({
               txId={dayData?.txId ?? null}
               field="balmBonus"
               isToday={h.date === today}
+              editMode={editMode}
             />
           )
         })}
