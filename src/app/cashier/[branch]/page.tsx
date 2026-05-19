@@ -177,6 +177,8 @@ export default async function CashierPage({
   const sb = createServerSupabaseClient()
   const profile = await getCurrentProfile()
   const isOwner = profile?.role === 'owner'
+  const isCrossBranchPeek =
+    profile?.role === 'cashier' && profile.branch !== branch
 
   // Pure UTC date arithmetic for yesterday — no DST/TZ bias.
   const [y, m, d] = businessDate.split('-').map((p) => parseInt(p, 10))
@@ -279,6 +281,7 @@ export default async function CashierPage({
       initialFreelanceRates={initialFreelanceRates}
       initialYesterdayTransactions={initialYesterdayTransactions}
       initialDailyRoster={initialDailyRoster}
+      readOnly={isCrossBranchPeek}
     >
       <div className="mx-auto max-w-[1600px] space-y-3 p-3 sm:p-4">
         <header className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-2 border-l-8 border-l-[var(--theme-primary)]">
@@ -295,6 +298,11 @@ export default async function CashierPage({
           <div className="flex items-center gap-2">
             <PendingSyncBadge />
             <ConnectionIndicator />
+            {isCrossBranchPeek && (
+              <span className="text-[10px] bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 rounded-full px-2 py-0.5 font-medium">
+                👁 View only
+              </span>
+            )}
             {isOwner && (
               <Link
                 href="/owner"
@@ -304,6 +312,18 @@ export default async function CashierPage({
                 ← Boss HQ
               </Link>
             )}
+            {(['Kimberry', 'Bishop', 'Chulia'] as const)
+              .filter((b) => b !== branch)
+              .map((b) => (
+                <Link
+                  key={b}
+                  href={`/cashier/${b}`}
+                  className="text-[10px] rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1 hover:bg-zinc-50 dark:hover:bg-zinc-700"
+                  title={`Peek at ${b}`}
+                >
+                  {b.slice(0, 3)}
+                </Link>
+              ))}
             <ThemeToggle />
             <form action="/auth/sign-out" method="post">
               <button

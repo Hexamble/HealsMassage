@@ -368,13 +368,17 @@ export async function writeTransaction(
 
   // For non-EXTRA, non-Freelance writes on the cashier path with a
   // matched staff row, also enforce that the staff is on today's
-  // daily_roster for the writing branch (Req 15.2). Owner callers and
-  // EXTRA / Freelance methods skip this check.
+  // daily_roster for the writing branch (Req 15.2). Owner callers,
+  // EXTRA / Freelance methods, and borrowed staff (home_branch ≠
+  // writing branch) skip this check — borrowed staff are expected to
+  // NOT be on the writing branch's roster.
   if (
     !isFreelanceMethod &&
     !isExtra &&
     profile.role === 'cashier' &&
-    staffId !== null
+    staffId !== null &&
+    staffRow &&
+    String(staffRow.home_branch) === branch
   ) {
     const { data: rosterEntry, error: rosterErr } = await sb
       .from('daily_roster')

@@ -68,14 +68,11 @@ export default async function CashierBranchLayout({
     redirect(`/auth/sign-in?next=${encodeURIComponent(nextPath)}`)
   }
 
-  // Cashiers may only operate their own branch. Owner passes through
-  // unrestricted (Req 1.2 — owner has full access to any branch UI).
-  // Cross-branch cashier access is treated as a sign-in mismatch and
-  // sent back through the auth flow with `?next=` preserved so signing
-  // in as the correct identity lands the user back here.
-  if (profile.role === 'cashier' && profile.branch !== branch) {
-    redirect(`/auth/sign-in?next=${encodeURIComponent(nextPath)}`)
-  }
+  // Cashiers may view any branch (cross-branch peek to see who's free)
+  // but can only WRITE to their own branch. The `readOnly` flag is
+  // passed through to the CashierProvider so the UI disables all edit
+  // affordances when peeking at another branch.
+  // Owner passes through unrestricted (Req 1.2).
 
   // 3. Resolve the branch theme class. `getBranchThemeClass` itself
   //    falls back to `theme-default` if the branch cannot be matched,
