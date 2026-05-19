@@ -50,3 +50,4 @@ supabase/migrations.legacy/
 
 .vercel
 .env*.local
+.env.vercel

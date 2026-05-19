@@ -80,7 +80,15 @@ function formatIssues(error: z.ZodError): string {
 }
 
 function loadClientEnv(): ClientEnv {
-  const result = clientEnvSchema.safeParse(process.env)
+  // Read the two NEXT_PUBLIC_* values via literal property accesses so the
+  // Next.js / webpack inliner replaces them with the build-time string at
+  // bundle time. If we instead spread `process.env` into the schema, the
+  // bundler can't see which keys we use and nothing gets inlined — the
+  // browser then reads `undefined` and the validator rightly throws.
+  const result = clientEnvSchema.safeParse({
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  })
   if (!result.success) {
     throw new Error(
       `Invalid public environment configuration: ${formatIssues(result.error)}`,
