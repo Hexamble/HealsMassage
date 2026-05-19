@@ -22,7 +22,8 @@ export function middleware(req: NextRequest) {
   const isPublicAsset =
     path.startsWith('/_next') ||
     path.startsWith('/favicon') ||
-    path.startsWith('/api/cron/')
+    path.startsWith('/api/cron/') ||
+    path === '/api/health'
 
   if (isAuthRoute || isPublicAsset) {
     return NextResponse.next()
