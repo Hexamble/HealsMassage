@@ -1,122 +1,147 @@
-// heals-system-rebuild — Owner Price Editor (Task 19.2)
+// Unified Prices & Commission Rates page.
 //
-// Edit one cell of the `prices` table at a time. Server-rendered
-// grid + an inline editor row similar to the rate editor. Bishop FR
-// rows are seeded RM 2 less than Kim/Chu but the owner can adjust
-// any cell individually.
+// Displays 5 grid sections:
+//   1. Customer Prices — Kimberry & Chulia
+//   2. Customer Prices — Bishop (FR -RM2)
+//   3. Staff Commission — All Branches
+//   4. Freelance — Kimberry & Chulia
+//   5. Freelance — Bishop
 
-import { BRANCHES, COURSES, DURATIONS, type Branch, type Course, type Duration } from '@/domain/types'
+import { COURSES, DURATIONS } from '@/domain/types'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 
-import PriceEditor from './PriceEditor'
+import PriceGrid, { type SectionDef } from './PriceGrid'
 
 export const dynamic = 'force-dynamic'
 
-interface RawPrice {
-  course: string
-  duration: number
-  branch: string
-  price: number | string
-}
-
-function n(v: unknown): number {
-  if (typeof v === 'number') return v
-  if (v == null) return 0
-  const x = Number(v)
-  return Number.isFinite(x) ? x : 0
+function n(v: unknown): number | undefined {
+  if (v == null) return undefined
+  const x = typeof v === 'number' ? v : Number(v)
+  return Number.isFinite(x) && x > 0 ? x : undefined
 }
 
 export default async function PricesPage() {
   const sb = createServerSupabaseClient()
-  const { data } = await sb
+
+  // Fetch prices (keyed by course, duration, branch)
+  const { data: priceRows } = await sb
     .from('prices')
     .select('course, duration, branch, price')
-    .order('course')
-    .order('duration')
 
-  const rows = ((data ?? []) as Record<string, unknown>[]).map(
-    (r): RawPrice => ({
-      course: String(r.course ?? ''),
-      duration: n(r.duration),
-      branch: String(r.branch ?? ''),
-      price: n(r.price),
-    }),
-  )
+  // Fetch commission rates — latest effective row per (course, duration, rate_type, branch_group)
+  const { data: rateRows } = await sb
+    .from('commission_rates')
+    .select('course, duration, rate_type, branch_group, amount, effective_from')
+    .order('effective_from', { ascending: false })
 
-  // Build a lookup so the grid can render every (course×duration×branch)
-  // combination, even cells that don't yet have a row.
-  const lookup = new Map<string, number>()
-  for (const r of rows) {
-    lookup.set(`${r.course}|${r.duration}|${r.branch}`, Number(r.price))
+  // --- Build price lookup: key = "course|duration|branch" ---
+  const priceLookup = new Map<string, number>()
+  for (const r of (priceRows ?? []) as Record<string, unknown>[]) {
+    const key = `${r.course}|${r.duration}|${r.branch}`
+    const val = n(r.price)
+    if (val != null) priceLookup.set(key, val)
   }
+
+  // --- Build rate lookup: key = "course|duration|rateType|branchGroup" ---
+  // Only keep the latest effective_from per unique key
+  const rateSeen = new Set<string>()
+  const rateLookup = new Map<string, number>()
+  for (const r of (rateRows ?? []) as Record<string, unknown>[]) {
+    const key = `${r.course}|${r.duration}|${r.rate_type}|${r.branch_group}`
+    if (rateSeen.has(key)) continue // already have the latest
+    rateSeen.add(key)
+    const val = n(r.amount)
+    if (val != null) rateLookup.set(key, val)
+  }
+
+  // --- Helper to build section data maps ---
+  function buildPriceData(branch: string): Record<string, number | undefined> {
+    const out: Record<string, number | undefined> = {}
+    for (const c of COURSES) {
+      for (const d of DURATIONS) {
+        const v = priceLookup.get(`${c}|${d}|${branch}`)
+        out[`${c}|${d}`] = v
+      }
+    }
+    return out
+  }
+
+  function buildRateData(
+    rateType: 'regular' | 'freelance',
+    branchGroup: string,
+  ): Record<string, number | undefined> {
+    const out: Record<string, number | undefined> = {}
+    for (const c of COURSES) {
+      for (const d of DURATIONS) {
+        const v = rateLookup.get(`${c}|${d}|${rateType}|${branchGroup}`)
+        out[`${c}|${d}`] = v
+      }
+    }
+    return out
+  }
+
+  // --- Section 1: Customer Prices — Kimberry & Chulia ---
+  // Kimberry and Chulia share the same prices, so we use Kimberry as source
+  const kimPriceData = buildPriceData('Kimberry')
+
+  // --- Section 2: Customer Prices — Bishop ---
+  const bishopPriceData = buildPriceData('Bishop')
+
+  // --- Section 3: Staff Commission — All Branches ---
+  const staffData = buildRateData('regular', 'all')
+
+  // --- Section 4: Freelance — Kimberry & Chulia ---
+  const freelanceAllData = buildRateData('freelance', 'all')
+
+  // --- Section 5: Freelance — Bishop ---
+  const freelanceBishopData = buildRateData('freelance', 'bishop')
+
+  const sections: SectionDef[] = [
+    {
+      title: '🏷️ CUSTOMER PRICES — Kimberry & Chulia',
+      type: 'price',
+      branch: 'Kimberry',
+      data: kimPriceData,
+    },
+    {
+      title: '🏷️ CUSTOMER PRICES — Bishop (FR −RM2)',
+      type: 'price',
+      branch: 'Bishop',
+      data: bishopPriceData,
+    },
+    {
+      title: '💼 STAFF COMMISSION — All Branches',
+      type: 'staff',
+      branchGroup: 'all',
+      data: staffData,
+    },
+    {
+      title: '🔶 FREELANCE — Kimberry & Chulia',
+      type: 'freelance',
+      branchGroup: 'all',
+      data: freelanceAllData,
+    },
+    {
+      title: '🔶 FREELANCE — Bishop',
+      type: 'freelance',
+      branchGroup: 'bishop',
+      data: freelanceBishopData,
+    },
+  ]
 
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl sm:text-3xl font-semibold">Prices</h1>
-        <p className="text-sm text-zinc-500 mt-1">
-          Customer price per (course × duration × branch). Cashier sees
-          this number when picking the row, and can override at the
-          point of sale for discounts.
+        <h1 className="text-2xl sm:text-3xl font-semibold dark:text-zinc-100">
+          Prices &amp; Commission Rates
+        </h1>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
+          All customer prices and commission rates in one view. Toggle edit
+          mode to update any cell inline.
         </p>
       </header>
 
-      <PriceEditor
-        courses={[...COURSES]}
-        durations={[...DURATIONS]}
-        branches={[...BRANCHES]}
-      />
-
-      <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
-        <header className="px-4 py-2.5 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/40">
-          <h2 className="text-sm font-semibold uppercase tracking-wide">
-            Current prices
-          </h2>
-        </header>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead className="text-[10px] uppercase tracking-wide text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
-              <tr>
-                <th className="px-3 py-2 text-left">Course</th>
-                <th className="px-3 py-2 text-right">Dur</th>
-                {BRANCHES.map((b) => (
-                  <th key={b} className="px-3 py-2 text-right">
-                    {b}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {COURSES.flatMap((c: Course) =>
-                DURATIONS.map((d: Duration) => {
-                  const cells = BRANCHES.map((b: Branch) =>
-                    lookup.get(`${c}|${d}|${b}`),
-                  )
-                  // Skip rows where every branch has no price.
-                  if (cells.every((v) => v === undefined)) return null
-                  return (
-                    <tr
-                      key={`${c}-${d}`}
-                      className="border-b border-zinc-100 dark:border-zinc-800"
-                    >
-                      <td className="px-3 py-1.5 font-medium">{c}</td>
-                      <td className="px-3 py-1.5 text-right">{d}</td>
-                      {cells.map((v, i) => (
-                        <td
-                          key={`${c}-${d}-${BRANCHES[i]}`}
-                          className="px-3 py-1.5 text-right tabular-nums font-mono"
-                        >
-                          {v == null ? '—' : Number(v).toFixed(2)}
-                        </td>
-                      ))}
-                    </tr>
-                  )
-                }),
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <PriceGrid sections={sections} />
     </div>
   )
 }
