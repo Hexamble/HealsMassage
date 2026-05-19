@@ -164,15 +164,32 @@ export default function SessionTable() {
   )
 
   // Reconcile drafts with persisted state when the context updates
-  // (realtime events, post-server-save replacements, morning reset).
+  // (post-server-save replacements, morning reset). We intentionally
+  // preserve any draft the user is actively editing — including ones
+  // that have not been saved yet — so realtime/refetch events do not
+  // wipe the cashier's in-progress entry. A draft is "in progress"
+  // when (a) it's saving, (b) it has an error, or (c) the user has
+  // typed at least one field but the row is not yet persisted (no id).
   useEffect(() => {
     setDrafts((prev) => {
       const byNum = new Map<number, DraftRow>()
-      // Carry over any in-flight edits that haven't resolved.
       for (const d of prev) {
-        if (d.saving || d.saveError) byNum.set(d.cashierRowNumber, d)
+        const userTouched =
+          !d.id &&
+          (d.staff.trim() !== '' ||
+            d.course.trim() !== '' ||
+            d.duration.trim() !== '' ||
+            d.method.trim() !== '' ||
+            d.timeIn.trim() !== '' ||
+            d.flags.trim() !== '' ||
+            d.comment.trim() !== '' ||
+            (d.cash !== '' && d.cash !== '0') ||
+            (d.qr !== '' && d.qr !== '0') ||
+            (d.credit !== '' && d.credit !== '0'))
+        if (d.saving || d.saveError || userTouched) {
+          byNum.set(d.cashierRowNumber, d)
+        }
       }
-      // Persisted rows from context win when there's no in-flight edit.
       for (const r of transactions) {
         if (!byNum.has(r.cashierRowNumber)) {
           byNum.set(r.cashierRowNumber, rowToDraft(r))

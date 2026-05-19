@@ -267,18 +267,41 @@ export default function MultiCombo({
           setHighlight(-1)
         }}
         onFocus={() => setOpen(true)}
-        onBlur={() => {
-          // When the user leaves the multi-combo entirely, commit any
-          // pending draft as a token and fire onCommit so the row saves.
-          setTimeout(() => {
-            if (draft.trim()) {
-              addToken(draft.trim(), false)
+        onBlur={(e) => {
+          // If focus is moving to another element inside this combobox
+          // (a chip's × button, the dropdown listbox in the portal),
+          // do nothing. The portal lives outside the container so we
+          // also have to consult document.getElementById.
+          const next = e.relatedTarget as Node | null
+          if (next && containerRef.current?.contains(next)) return
+          if (next) {
+            const portal = document.getElementById(listboxId)
+            if (portal?.contains(next)) return
+          }
+          // True blur — leaving the cell. Commit any pending draft as a
+          // chip, close the menu, and signal autosave with the latest
+          // tokens (computed fresh, NOT the stale `value` closure).
+          const finalTokens = [...tokens]
+          const trimmed = draft.trim()
+          if (
+            trimmed &&
+            !finalTokens.some((t) => t.toLowerCase() === trimmed.toLowerCase())
+          ) {
+            if (
+              freeText ||
+              options.some(
+                (o) => o.value.toLowerCase() === trimmed.toLowerCase(),
+              )
+            ) {
+              finalTokens.push(trimmed)
             }
-            setOpen(false)
-            setHighlight(-1)
-            // Fire onCommit with the current value so the autosave triggers.
-            onCommit?.(value)
-          }, 120)
+          }
+          const finalValue = joinTokens(finalTokens)
+          if (finalValue !== value) onChange(finalValue)
+          setDraft('')
+          setOpen(false)
+          setHighlight(-1)
+          onCommit?.(finalValue)
         }}
         onKeyDown={handleKeyDown}
         className={[

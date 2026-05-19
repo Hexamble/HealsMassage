@@ -22,19 +22,39 @@
  */
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Light mode — warm off-white instead of pure white. Pure #ffffff
+     is fatiguing under shop fluorescent lighting (the "too bright"
+     complaint). The slight warmth keeps the page calm without
+     reading as gray. */
+  --background: #f7f6f2;
+  --surface: #ffffff;
+  --foreground: #1a1a1a;
+  --muted: #6b7280;
+  --muted-strong: #9ca3af;
 }
 
 html.dark {
-  --background: #0a0a0a;
-  --foreground: #ededed;
+  --background: #0b0d0e;
+  --surface: #16181a;
+  --foreground: #f3f4f6;
+  --muted: #9ca3af;
+  --muted-strong: #6b7280;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Render zero values in summary panels with a softer color so the
+   cashier's eye isn't pulled to "0" everywhere. Apply via
+   `data-zero="true"` on the cell. */
+[data-zero='true'] {
+  color: var(--muted-strong);
 }
 
 @layer utilities {

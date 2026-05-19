@@ -55,6 +55,7 @@ function Row({
   bold?: boolean
   integer?: boolean
 }) {
+  const isZero = value === 0
   return (
     <>
       <dt className="text-zinc-600 dark:text-zinc-400">{label}</dt>
@@ -62,9 +63,11 @@ function Row({
         className={[
           'text-right',
           bold ? 'font-semibold' : '',
+          isZero ? 'text-zinc-400 dark:text-zinc-600' : '',
         ].join(' ')}
+        data-zero={isZero ? 'true' : undefined}
       >
-        {integer ? value : value.toFixed(2)}
+        {isZero ? '—' : integer ? value : value.toFixed(2)}
       </dd>
     </>
   )
