@@ -62,7 +62,7 @@ function destinationFor(
 ): string {
   if (next) return next
   if (role === 'cashier' && branch) return `/cashier/${branch}`
-  if (role === 'owner') return '/owner/command-center'
+  if (role === 'owner') return '/owner'
   return '/'
 }
 

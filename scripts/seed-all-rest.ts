@@ -9,14 +9,14 @@
  *   npm run seed:all:prod     (uses .env.production.local)
  */
 
-const URL = process.env.NEXT_PUBLIC_SUPABASE_URL
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
-if (!URL || !KEY) {
+if (!SUPABASE_URL || !KEY) {
   console.error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
   process.exit(2)
 }
 
-console.log(`Seeding all reference data into ${URL}\n`)
+console.log(`Seeding all reference data into ${SUPABASE_URL}\n`)
 
 async function run(name: string, modulePath: string): Promise<void> {
   console.log(`>>> ${name}`)
