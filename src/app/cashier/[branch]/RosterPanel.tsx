@@ -78,13 +78,24 @@ export default function RosterPanel() {
   function openEdit() {
     // Pre-select roster members whose names appear in the saved
     // dailyRoster (or, when empty, the top-7 derived names).
+    // Only match staff from THIS branch (not other branches).
     const lcSet = new Set(displayedRoster.map((n) => n.toLowerCase()))
     const ids = roster
-      .filter((s) => lcSet.has(s.name.trim().toLowerCase()))
+      .filter(
+        (s) =>
+          s.homeBranch === branch &&
+          !s.isFreelance &&
+          s.isActive &&
+          lcSet.has(s.name.trim().toLowerCase()),
+      )
       .map((s) => s.id)
     setPickedIds(ids)
     // Walk-ins = names in displayedRoster that don't match any roster row.
-    const knownLc = new Set(roster.map((s) => s.name.trim().toLowerCase()))
+    const knownLc = new Set(
+      roster
+        .filter((s) => s.homeBranch === branch && !s.isFreelance)
+        .map((s) => s.name.trim().toLowerCase()),
+    )
     setWalkIns(displayedRoster.filter((n) => !knownLc.has(n.toLowerCase())))
     setWalkInDraft('')
     setError(null)

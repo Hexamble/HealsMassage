@@ -139,7 +139,9 @@ export default function MultiCombo({
   function commitTokens(nextTokens: ReadonlyArray<string>) {
     const next = joinTokens(nextTokens)
     if (next !== value) onChange(next)
-    onCommit?.(next)
+    // DO NOT call onCommit here. The multi-select stays open for
+    // further picks. onCommit (which triggers autosave) fires only
+    // when the user leaves the cell (blur / Tab / Escape).
   }
 
   function addToken(t: string, keepOpen = true) {
@@ -265,6 +267,19 @@ export default function MultiCombo({
           setHighlight(-1)
         }}
         onFocus={() => setOpen(true)}
+        onBlur={() => {
+          // When the user leaves the multi-combo entirely, commit any
+          // pending draft as a token and fire onCommit so the row saves.
+          setTimeout(() => {
+            if (draft.trim()) {
+              addToken(draft.trim(), false)
+            }
+            setOpen(false)
+            setHighlight(-1)
+            // Fire onCommit with the current value so the autosave triggers.
+            onCommit?.(value)
+          }, 120)
+        }}
         onKeyDown={handleKeyDown}
         className={[
           'flex-1 min-w-[6ch] bg-transparent text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border-0 outline-0 px-1 py-0.5 text-sm',

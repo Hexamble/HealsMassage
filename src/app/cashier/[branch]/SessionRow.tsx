@@ -430,12 +430,15 @@ export default function SessionRow({
   }
 
   const isDimmed = !!row.isPlaceholder && !isSaveable(row)
+  const rowIdx = row.cashierRowNumber
   const rowStateClass = isDimmed
     ? 'opacity-60'
     : row.saving
     ? 'opacity-80'
     : row.saveError
     ? 'bg-red-50 dark:bg-red-950/30'
+    : rowIdx % 2 === 0
+    ? 'bg-zinc-50/70 dark:bg-zinc-800/30'
     : ''
 
   return (
