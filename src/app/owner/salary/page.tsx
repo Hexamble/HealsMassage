@@ -1,24 +1,21 @@
 // heals-system-rebuild — Owner Salary Board (Task 14.1)
 //
-// Per-branch + multi-branch summary of staff commissions for a pay
-// cycle, with the EXTRA fallback rule applied so a Kimberry-home
-// staff who works at Bishop sees their commission credited correctly
-// regardless of whether each branch logged the row.
+// Spreadsheet-style grid showing each staff member's daily commission
+// and BALM bonus for the current pay cycle. Editable cells allow the
+// owner to override/backfill historical data via ownerSetDayCommission.
 //
-// Pay-cycle navigation:
-//   - The page accepts `?monthIdx=4&year=2026` to view any cycle.
-//   - When unset, it defaults to the cycle that contains today.
-//   - The cycle start day is read from `settings.pay_cycle_start_day`.
+// Layout per the workbook:
+//   Row 1: day-of-week abbreviations (TUE, WED, ...)
+//   Row 2: day numbers (21, 22, ...)
+//   Per staff: commission row (bold name) + BALM row (lighter)
+//   Right columns: TOTAL, TOTAL+BALM
 //
-// Historical backfill: the cashier-side page allows owner historical
-// edits, but the salary board itself is read-only (the owner edits
-// individual cells via the cashier route or the Time Machine).
+// Sections: Kimberry → Bishop → Chulia (per-branch grouping by home branch)
 //
-// Validates: Requirements 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 18.2.
+// Validates: Requirements 9.1–9.7, 18.2.
 
 import { cycleDates } from '@/domain/cycle'
 import { getBusinessDate } from '@/domain/business-date'
-import { buildSalaryBoard } from '@/domain/salary-board'
 import {
   BRANCHES,
   type Branch,
@@ -26,8 +23,17 @@ import {
   type TransactionRow,
 } from '@/domain/types'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import SalaryGrid, {
+  type BranchSectionData,
+  type StaffRow,
+  type StaffDayData,
+} from './SalaryGrid'
 
 export const dynamic = 'force-dynamic'
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function n(v: unknown): number {
   if (typeof v === 'number') return v
@@ -75,6 +81,17 @@ function mapStaff(r: Record<string, unknown>): StaffMember {
   }
 }
 
+const DAY_ABBREVS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
+
+function getDayOfWeek(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00Z')
+  return DAY_ABBREVS[d.getUTCDay()]
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+
 export default async function SalaryBoardPage({
   searchParams,
 }: {
@@ -105,8 +122,7 @@ export default async function SalaryBoardPage({
 
   const cycle = cycleDates(monthIdx, year, payCycleStartDay)
 
-  // Fetch every transaction in the cycle window, plus the staff roster
-  // (active + inactive — we still want to render historical staff).
+  // Fetch transactions + staff roster in parallel.
   const [txRes, staffRes] = await Promise.all([
     sb
       .from('transactions')
@@ -120,19 +136,115 @@ export default async function SalaryBoardPage({
     mapStaff,
   )
 
-  const board = buildSalaryBoard(txns, roster, cycle)
+  // Build roster lookup (active, non-freelance only for display).
+  const rosterByName = new Map<string, StaffMember>()
+  for (const s of roster) {
+    rosterByName.set(s.name.trim().toLowerCase(), s)
+  }
 
-  // Build prev/next cycle links so the owner can paginate.
+  // Group transactions by staff+date. For each staff+date we track:
+  //   - sum of totalCommission (the daily commission cell)
+  //   - sum of balmBonus (the BALM cell)
+  //   - first transaction ID (for the edit action — edits the first tx of the day)
+  type DayBucket = { commission: number; balm: number; txId: string }
+  // staffLc → date → bucket
+  const staffDays = new Map<string, Map<string, DayBucket>>()
+  // staffLc → display name
+  const staffDisplayNames = new Map<string, string>()
+
+  // Filter out freelance rows
+  for (const tx of txns) {
+    if (tx.method.trim().toLowerCase() === 'freelance') continue
+
+    const staffLc = tx.staff.trim().toLowerCase()
+    if (!staffLc) continue
+
+    if (!staffDisplayNames.has(staffLc)) {
+      staffDisplayNames.set(staffLc, tx.staff.trim())
+    }
+
+    let dayMap = staffDays.get(staffLc)
+    if (!dayMap) {
+      dayMap = new Map()
+      staffDays.set(staffLc, dayMap)
+    }
+
+    const existing = dayMap.get(tx.businessDate)
+    if (existing) {
+      existing.commission += n(tx.totalCommission)
+      existing.balm += n(tx.balmBonus)
+    } else {
+      dayMap.set(tx.businessDate, {
+        commission: n(tx.totalCommission),
+        balm: n(tx.balmBonus),
+        txId: tx.id,
+      })
+    }
+  }
+
+  // Build per-branch sections: group staff by home branch.
+  const sections: BranchSectionData[] = []
+
+  for (const branch of BRANCHES) {
+    const branchStaff: StaffRow[] = []
+
+    for (const [staffLc, dayMap] of Array.from(staffDays)) {
+      const rosterEntry = rosterByName.get(staffLc)
+      if (!rosterEntry) continue
+      if (rosterEntry.isFreelance) continue
+      if (!rosterEntry.isActive) continue
+      if (rosterEntry.homeBranch !== branch) continue
+
+      const days: Record<string, StaffDayData> = {}
+      let totalCommission = 0
+      let totalBalm = 0
+
+      for (const [date, bucket] of Array.from(dayMap)) {
+        days[date] = {
+          txId: bucket.txId,
+          commission: Math.round(bucket.commission * 100) / 100,
+          balm: Math.round(bucket.balm * 100) / 100,
+        }
+        totalCommission += bucket.commission
+        totalBalm += bucket.balm
+      }
+
+      branchStaff.push({
+        name: staffDisplayNames.get(staffLc) ?? rosterEntry.name,
+        days,
+        totalCommission: Math.round(totalCommission * 100) / 100,
+        totalBalm: Math.round(totalBalm * 100) / 100,
+      })
+    }
+
+    // Sort by total descending, then name ascending.
+    branchStaff.sort(
+      (a, b) => b.totalCommission - a.totalCommission || a.name.localeCompare(b.name),
+    )
+
+    if (branchStaff.length > 0) {
+      sections.push({ branch, staff: branchStaff })
+    }
+  }
+
+  // Build day headers from cycle.days.
+  const dayHeaders = cycle.days.map((d) => ({
+    date: d,
+    dayOfWeek: getDayOfWeek(d),
+    dayNum: String(parseInt(d.slice(8), 10)), // strip leading zero
+  }))
+
+  // Prev/next cycle navigation.
   const prevMonthIdx = monthIdx === 0 ? 11 : monthIdx - 1
   const prevYear = monthIdx === 0 ? year - 1 : year
   const nextMonthIdx = monthIdx === 11 ? 0 : monthIdx + 1
   const nextYear = monthIdx === 11 ? year + 1 : year
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold">Salary Board</h1>
+          <h1 className="text-2xl font-semibold">Salary Board</h1>
           <p className="text-sm text-zinc-500 mt-1">
             Cycle: <span className="font-mono">{cycle.startDate}</span> →{' '}
             <span className="font-mono">{cycle.endDate}</span> · Day{' '}
@@ -142,130 +254,20 @@ export default async function SalaryBoardPage({
         <div className="flex items-center gap-2">
           <a
             href={`?monthIdx=${prevMonthIdx}&year=${prevYear}`}
-            className="rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
           >
-            ← Prev cycle
+            ← Prev
           </a>
           <a
             href={`?monthIdx=${nextMonthIdx}&year=${nextYear}`}
-            className="rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
           >
-            Next cycle →
+            Next →
           </a>
         </div>
       </header>
 
-      {BRANCHES.map((b) => {
-        const sec = board.perBranch[b]
-        if (!sec) return null
-        return (
-          <BranchSection
-            key={b}
-            title={b}
-            staff={sec.staff}
-            total={sec.total}
-            days={cycle.days}
-            today={today}
-          />
-        )
-      })}
-
-      {board.multiBranch.staff.length > 0 && (
-        <BranchSection
-          title="Multi-branch summary"
-          staff={board.multiBranch.staff}
-          total={board.multiBranch.total}
-          days={cycle.days}
-          today={today}
-        />
-      )}
-
-      {Object.keys(board.perBranch).length === 0 &&
-        board.multiBranch.staff.length === 0 && (
-          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-6 text-sm text-zinc-500">
-            No transactions in this cycle yet.
-          </div>
-        )}
+      <SalaryGrid sections={sections} dayHeaders={dayHeaders} today={today} />
     </div>
-  )
-}
-
-function BranchSection({
-  title,
-  staff,
-  total,
-  days,
-  today,
-}: {
-  title: string
-  staff: ReadonlyArray<{ name: string; daily: Record<string, number>; total: number }>
-  total: number
-  days: ReadonlyArray<string>
-  today: string
-}) {
-  return (
-    <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
-      <header className="px-4 py-2.5 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/40 flex items-center justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wide">
-          {title}
-        </h2>
-        <span className="text-xs text-zinc-500 tabular-nums">
-          Total: RM {total.toFixed(2)}
-        </span>
-      </header>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-xs">
-          <thead className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
-            <tr>
-              <th className="px-2 py-2 text-left sticky left-0 bg-white dark:bg-zinc-900 z-10">
-                Staff
-              </th>
-              {days.map((d) => (
-                <th
-                  key={d}
-                  className={`px-2 py-2 text-right tabular-nums ${
-                    d === today
-                      ? 'bg-[var(--theme-accent)]/15 text-zinc-900 dark:text-zinc-50'
-                      : ''
-                  }`}
-                  title={d}
-                >
-                  {d.slice(8)}
-                </th>
-              ))}
-              <th className="px-2 py-2 text-right font-semibold">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {staff.map((s) => (
-              <tr
-                key={s.name}
-                className="border-b border-zinc-100 dark:border-zinc-800"
-              >
-                <td className="px-2 py-1.5 font-medium sticky left-0 bg-white dark:bg-zinc-900">
-                  {s.name}
-                </td>
-                {days.map((d) => {
-                  const v = s.daily[d] ?? 0
-                  return (
-                    <td
-                      key={d}
-                      className={`px-2 py-1.5 text-right tabular-nums ${
-                        d === today ? 'bg-[var(--theme-accent)]/15' : ''
-                      } ${v === 0 ? 'text-zinc-300 dark:text-zinc-700' : ''}`}
-                    >
-                      {v === 0 ? '·' : v.toFixed(2)}
-                    </td>
-                  )
-                })}
-                <td className="px-2 py-1.5 text-right font-semibold tabular-nums">
-                  {s.total.toFixed(2)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
   )
 }
