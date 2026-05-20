@@ -152,6 +152,34 @@ export default function RosterPanel() {
     )
   }
 
+  async function deactivateStaff(id: string, name: string) {
+    // Deactivate = set is_active=false. The staff disappears from all
+    // dropdowns and rosters but their historical records remain.
+    const confirmed = window.confirm(
+      `Remove "${name}" from the company? Their past records stay, but they won't appear in any dropdown anymore.`,
+    )
+    if (!confirmed) return
+    try {
+      const result = await saveStaff({
+        id,
+        name,
+        homeBranch: branch,
+        isFreelance: false,
+        isActive: false,
+      })
+      if (!result.ok) {
+        setError(result.message)
+        return
+      }
+      // Remove from local roster state
+      setRoster((prev) => prev.filter((s) => s.id !== id))
+      // Remove from picked if they were selected
+      setPickedIds((prev) => prev.filter((x) => x !== id))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   return (
     <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
       <header className="px-4 py-2.5 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/40 flex items-center justify-between gap-3">
@@ -208,6 +236,7 @@ export default function RosterPanel() {
                   label={s.name}
                   active={pickedIds.includes(s.id)}
                   onClick={() => togglePick(s.id)}
+                  onDeactivate={() => void deactivateStaff(s.id, s.name)}
                 />
               ))}
             {roster.filter(
@@ -305,24 +334,45 @@ function Chip({
   label,
   active,
   onClick,
+  onDeactivate,
 }: {
   label: string
   active: boolean
   onClick: () => void
+  onDeactivate?: () => void
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={[
-        'rounded-full border px-3 py-1 text-sm transition-colors',
-        active
-          ? 'border-[var(--theme-primary)] bg-[var(--theme-primary)] text-[var(--theme-primary-foreground)]'
-          : 'border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700',
-      ].join(' ')}
-    >
-      {label}
-    </button>
+    <span className="inline-flex items-center gap-0">
+      <button
+        type="button"
+        onClick={onClick}
+        aria-pressed={active}
+        className={[
+          'rounded-l-full border px-3 py-1 text-sm transition-colors',
+          active
+            ? 'border-[var(--theme-primary)] bg-[var(--theme-primary)] text-[var(--theme-primary-foreground)]'
+            : 'border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700',
+          onDeactivate ? 'rounded-r-none border-r-0' : 'rounded-r-full',
+        ].join(' ')}
+      >
+        {label}
+      </button>
+      {onDeactivate && (
+        <button
+          type="button"
+          onClick={onDeactivate}
+          title={`Remove ${label} from company`}
+          aria-label={`Remove ${label} from company`}
+          className={[
+            'rounded-r-full border border-l-0 px-1.5 py-1 text-xs transition-colors',
+            active
+              ? 'border-[var(--theme-primary)] bg-[var(--theme-primary)] text-[var(--theme-primary-foreground)] hover:bg-red-600'
+              : 'border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30',
+          ].join(' ')}
+        >
+          ✕
+        </button>
+      )}
+    </span>
   )
 }
