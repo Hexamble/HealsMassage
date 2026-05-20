@@ -1,89 +1,125 @@
 'use client'
 
 /**
- * heals-system-rebuild — SessionTable (Task 9.4)
+ * SessionTable — Clean rewrite.
  *
- * The cashier's main work surface: a wide editable table that mirrors
- * the Google Sheet workflow the shop has used for years. Every column
- * is a combobox with free-text fallback (Staff, Course, Duration,
- * Method, Flags) so a cashier can pick from a list OR type anything
- * the shop has never seen before — borrowed staff, walk-in
- * freelancer, custom flag.
- *
- * Layout rules straight from the user:
- *   - Page opens with **20 empty rows**. The cashier fills the first
- *     7 staff names down the left column to set the queue order
- *     (those 7 names ARE the day's roster).
- *   - "+ Add 5 rows" button below the table appends 5 more whenever
- *     the day gets busy. No upper limit.
- *   - Empty rows save nothing — a row only persists once staff +
- *     course + duration + method are all filled.
- *   - Already-saved rows are editable inline; every blur autosaves
- *     via `writeTransaction` (optimistic UI; offline queue fallback
- *     when the network is unreachable).
- *   - Delete button per saved row calls `deleteTransaction({rowId})`.
- *
- * Save semantics:
- *   - Optimistic insert into `useCashier()` state right away.
- *   - Server result replaces the optimistic row by id.
- *   - On retryable network failure, enqueue to the IndexedDB offline
- *     queue (`@/lib/offline-queue`); the offline-sync worker drains
- *     when online again.
- *   - On terminal validation failure (UNKNOWN_STAFF, INVALID_INPUT,
- *     etc.), the row stays in the local list with `saveError` set so
- *     the cashier can fix it — but nothing lands in the DB.
- *
- * Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.8, 2.10,
- *            7.1, 7.2, 7.3, 7.5, 14.4, 14.5, 21.3, 23.3.
+ * Single component with inline editable rows. Save triggers on
+ * row-change (focus moves to a different row) or explicit Save button.
+ * No localStorage, no offline queue, no optimistic/reconcile machinery.
+ * Fetches fresh data on load and on window focus via context.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRef, useState } from 'react'
 
+import { buildRowId } from '@/domain/row-id'
 import {
-  buildRowId,
-} from '@/domain/row-id'
-import type { Branch, TransactionRow } from '@/domain/types'
+  COURSES,
+  DURATIONS,
+  TRANSACTION_METHODS,
+  type Branch,
+  type StaffMember,
+  type TransactionRow,
+} from '@/domain/types'
+import type { Course, Duration } from '@/domain/commission'
 import { writeTransaction } from '@/app/actions/writeTransaction'
 import { deleteTransaction } from '@/app/actions/deleteTransaction'
-import { enqueue } from '@/lib/offline-queue'
 import { toast } from '@/components/cashier/Toaster'
+import { parseTimeInput } from '@/lib/timeFormat'
 
 import { useCashier } from './CashierContext'
-import SessionRow, {
-  blankDraft,
-  isSaveable,
-  rowToDraft,
-  type DraftRow,
-} from './SessionRow'
+import { blankDraft, isSaveable, rowToDraft, type DraftRow } from './SessionRow'
+import { computeRowDefaults } from './rowDefaults'
 
-const INITIAL_BLANK_ROWS = 20
+const INITIAL_ROWS = 15
 const ADD_BATCH = 5
 
-// Errors we treat as terminal: surfacing them to the cashier as a
-// row-level error rather than retrying forever.
-const TERMINAL_CODES = new Set<string>([
-  'UNAUTHENTICATED',
-  'FORBIDDEN',
-  'INVALID_INPUT',
-  'BRANCH_MISMATCH',
-  'UNKNOWN_STAFF',
-  'STAFF_NOT_ON_ROSTER',
-])
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-function isNetworkError(code: string): boolean {
-  return code === 'NETWORK_ERROR' || code === 'DB_ERROR'
+function num(s: string): number {
+  const n = Number(s)
+  return Number.isFinite(n) ? n : 0
 }
 
-/**
- * Convert an editable draft into the payload `writeTransaction`
- * expects. Empty strings become `undefined` so the server can fall
- * back to its own auto-fills (price, commission components).
- */
-function draftToPayload(d: DraftRow, branch: Branch): Record<string, unknown> {
-  const num = (s: string) => {
-    const n = Number(s)
-    return Number.isFinite(n) ? n : 0
+function buildInitialRows(
+  saved: ReadonlyArray<TransactionRow>,
+  minRows: number,
+): DraftRow[] {
+  const byNum = new Map<number, DraftRow>()
+  for (const r of saved) {
+    byNum.set(r.cashierRowNumber, rowToDraft(r))
   }
+  const highest = saved.reduce(
+    (acc, r) => Math.max(acc, r.cashierRowNumber),
+    0,
+  )
+  const target = Math.max(minRows, highest)
+  const list: DraftRow[] = []
+  for (let i = 1; i <= target; i++) {
+    list.push(byNum.get(i) ?? blankDraft(i))
+  }
+  return list
+}
+
+/** Compute auto-fill for price/commission when course/duration/method/flags change. */
+function applyAutoFill(
+  row: DraftRow,
+  branch: Branch,
+  businessDate: string,
+  ctx: {
+    prices: ReturnType<typeof useCashier>['prices']
+    regularRates: ReturnType<typeof useCashier>['regularRates']
+    freelanceRates: ReturnType<typeof useCashier>['freelanceRates']
+    roster: StaffMember[]
+  },
+): DraftRow {
+  if (!row.course || !row.duration) return row
+  const dur = num(row.duration)
+  if (![30, 60, 90, 120].includes(dur)) return row
+
+  const staffIsFreelance = ctx.roster.some(
+    (s) => s.name.trim().toLowerCase() === row.staff.trim().toLowerCase() && s.isFreelance,
+  )
+
+  const defaults = computeRowDefaults({
+    branch,
+    businessDate,
+    course: row.course as Course,
+    duration: dur as Duration,
+    method: row.method,
+    flags: row.flags,
+    staffIsFreelance,
+    prices: ctx.prices,
+    regularRates: ctx.regularRates,
+    freelanceRates: ctx.freelanceRates,
+  })
+
+  return {
+    ...row,
+    price: String(defaults.price),
+    baseCommission: String(defaults.baseCommission),
+    balmBonus: String(defaults.balmBonus),
+    bookingBonus: String(defaults.bookingBonus),
+    totalCommission: String(defaults.totalCommission),
+  }
+}
+
+/** Compute time-out from time-in + duration. */
+function computeTimeOut(timeIn: string, duration: string): string {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(timeIn.trim())
+  if (!m) return ''
+  const dur = num(duration)
+  if (![30, 60, 90, 120].includes(dur)) return ''
+  const startMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10)
+  const endMin = Math.min(startMin + dur, 23 * 60 + 59)
+  const hh = String(Math.floor(endMin / 60)).padStart(2, '0')
+  const mm = String(endMin % 60).padStart(2, '0')
+  return `${hh}:${mm}`
+}
+
+/** Build the payload writeTransaction expects. */
+function draftToPayload(d: DraftRow, branch: Branch) {
   return {
     branch,
     cashierRowNumber: d.cashierRowNumber,
@@ -96,15 +132,8 @@ function draftToPayload(d: DraftRow, branch: Branch): Record<string, unknown> {
     cash: num(d.cash),
     qr: num(d.qr),
     credit: num(d.credit),
-    // Pass price + commission components through ONLY when the
-    // cashier overrode them — otherwise the server auto-fills from
-    // the same lookup tables we use for the live preview.
-    ...(d.overrides.price ? { price: num(d.price) } : {}),
+    price: num(d.price),
     addon: num(d.addon),
-    ...(d.overrides.base ? { baseCommission: num(d.baseCommission) } : {}),
-    ...(d.overrides.balm ? { balmBonus: num(d.balmBonus) } : {}),
-    ...(d.overrides.book ? { bookingBonus: num(d.bookingBonus) } : {}),
-    ...(d.overrides.total ? { totalCommission: num(d.totalCommission) } : {}),
     flags: d.flags,
     comment: d.comment,
     staffBalm: d.flags.toLowerCase().includes('staff balm'),
@@ -112,31 +141,9 @@ function draftToPayload(d: DraftRow, branch: Branch): Record<string, unknown> {
   }
 }
 
-/**
- * Build the initial draft list: persisted rows from context + N blank
- * placeholders to fill out 20 visible slots. Persisted rows always
- * occupy their `cashierRowNumber` slot; blanks fill the gaps and
- * extend past the highest persisted number.
- */
-function buildInitialDrafts(
-  saved: ReadonlyArray<TransactionRow>,
-  visibleRowCount: number,
-): DraftRow[] {
-  const byNum = new Map<number, DraftRow>()
-  for (const r of saved) {
-    byNum.set(r.cashierRowNumber, rowToDraft(r))
-  }
-  const highest = saved.reduce(
-    (acc, r) => Math.max(acc, r.cashierRowNumber),
-    0,
-  )
-  const target = Math.max(visibleRowCount, highest)
-  const list: DraftRow[] = []
-  for (let i = 1; i <= target; i++) {
-    list.push(byNum.get(i) ?? blankDraft(i))
-  }
-  return list
-}
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 export default function SessionTable() {
   const ctx = useCashier()
@@ -149,445 +156,200 @@ export default function SessionTable() {
     regularRates,
     freelanceRates,
     readOnly,
-    addOptimistic,
-    replaceOptimistic,
-    removeOptimistic,
+    refreshAll,
   } = ctx
 
-  // Local-storage scratchpad key for partial (unsaved) drafts. The
-  // user expects typing to persist across tab switches and page
-  // reloads even when a row is incomplete (no method, no payment yet).
-  // Saved rows always come from the DB so they're never on the
-  // scratchpad.
-  const draftStorageKey = `heals.draft.v1.${branch}.${businessDate}`
+  const [rows, setRows] = useState<DraftRow[]>(() =>
+    buildInitialRows(transactions, INITIAL_ROWS),
+  )
 
-  function loadStoredDrafts(): DraftRow[] | null {
-    if (typeof window === 'undefined') return null
-    try {
-      const raw = window.localStorage.getItem(draftStorageKey)
-      if (!raw) return null
-      const parsed = JSON.parse(raw)
-      if (!Array.isArray(parsed)) return null
-      return parsed as DraftRow[]
-    } catch {
-      return null
-    }
-  }
+  // Track which row the user is currently editing
+  const activeRowRef = useRef<number | null>(null)
 
-  function saveStoredDrafts(drafts: DraftRow[]) {
-    if (typeof window === 'undefined') return
-    // Only persist drafts the cashier has actually typed something
-    // into AND that haven't been saved yet (no id).
-    const partial = drafts.filter(
-      (d) =>
-        !d.id &&
-        (d.staff.trim() !== '' ||
-          d.course.trim() !== '' ||
-          d.duration.trim() !== '' ||
-          d.method.trim() !== '' ||
-          d.timeIn.trim() !== '' ||
-          d.flags.trim() !== '' ||
-          d.comment.trim() !== '' ||
-          (d.cash && d.cash !== '0') ||
-          (d.qr && d.qr !== '0') ||
-          (d.credit && d.credit !== '0')),
+  // --- Row update helper (always reads latest from state) ---
+  function updateRow(rowNum: number, updater: (prev: DraftRow) => DraftRow) {
+    setRows((prev) =>
+      prev.map((r) => (r.cashierRowNumber === rowNum ? updater(r) : r)),
     )
+  }
+
+  // --- Save logic ---
+  async function saveRow(row: DraftRow) {
+    if (!isSaveable(row)) return
+    updateRow(row.cashierRowNumber, (r) => ({ ...r, saving: true, saveError: undefined }))
+
     try {
-      if (partial.length === 0) {
-        window.localStorage.removeItem(draftStorageKey)
+      const payload = draftToPayload(row, branch)
+      const result = await writeTransaction(payload)
+      if (result.ok) {
+        const r = result.row
+        updateRow(row.cashierRowNumber, (prev) => ({
+          ...prev,
+          id: r.id,
+          saving: false,
+          saveError: undefined,
+          // Update with server-computed values
+          price: String(r.price),
+          baseCommission: String(r.baseCommission),
+          balmBonus: String(r.balmBonus),
+          bookingBonus: String(r.bookingBonus),
+          totalCommission: String(r.totalCommission),
+        }))
       } else {
-        window.localStorage.setItem(draftStorageKey, JSON.stringify(partial))
+        updateRow(row.cashierRowNumber, (prev) => ({
+          ...prev,
+          saving: false,
+          saveError: `${result.code}: ${result.message}`,
+        }))
+        toast({ message: `Row ${row.cashierRowNumber}: ${result.message}`, variant: 'error' })
       }
-    } catch {
-      // localStorage quota / disabled — silently degrade.
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Network error'
+      updateRow(row.cashierRowNumber, (prev) => ({
+        ...prev,
+        saving: false,
+        saveError: msg,
+      }))
+      toast({ message: `Row ${row.cashierRowNumber}: ${msg}`, variant: 'error' })
     }
   }
 
-  // The number of "visible slots" — saved rows always show; we pad
-  // up to this count with blanks. Cashiers extend with "Add 5".
-  const [visibleRowCount, setVisibleRowCount] = useState(INITIAL_BLANK_ROWS)
+  // Save on explicit button click — reads latest state
+  function handleSaveClick(rowNum: number) {
+    setRows((current) => {
+      const row = current.find((r) => r.cashierRowNumber === rowNum)
+      if (row && isSaveable(row)) {
+        void saveRow(row)
+      }
+      return current
+    })
+  }
 
-  // Local drafts mirror persisted rows but allow edit-in-flight state.
-  const [drafts, setDrafts] = useState<DraftRow[]>(() => {
-    const stored = loadStoredDrafts()
-    if (stored && stored.length > 0) {
-      // Merge: stored partial drafts win for their slots, persisted
-      // rows from `transactions` fill the others.
-      const byNum = new Map<number, DraftRow>()
-      for (const d of stored) byNum.set(d.cashierRowNumber, d)
-      for (const r of transactions) {
-        if (!byNum.has(r.cashierRowNumber)) {
-          byNum.set(r.cashierRowNumber, rowToDraft(r))
+  // --- Focus handler: save previous row on row change ---
+  function handleCellFocus(rowNum: number) {
+    const prev = activeRowRef.current
+    if (prev !== null && prev !== rowNum) {
+      // Read latest state for the previous row and save if needed
+      setRows((current) => {
+        const prevRow = current.find((r) => r.cashierRowNumber === prev)
+        if (prevRow && isSaveable(prevRow) && prevRow.id === '') {
+          void saveRow(prevRow)
         }
-      }
-      const highest = Math.max(
-        transactions.reduce((acc, r) => Math.max(acc, r.cashierRowNumber), 0),
-        ...stored.map((d) => d.cashierRowNumber),
-      )
-      const target = Math.max(INITIAL_BLANK_ROWS, highest)
-      const list: DraftRow[] = []
-      for (let i = 1; i <= target; i++) {
-        list.push(byNum.get(i) ?? blankDraft(i))
-      }
-      return list
+        return current
+      })
     }
-    return buildInitialDrafts(transactions, INITIAL_BLANK_ROWS)
-  })
+    activeRowRef.current = rowNum
+  }
 
-  // Persist partial drafts whenever they change.
-  useEffect(() => {
-    saveStoredDrafts(drafts)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drafts, draftStorageKey])
+  // --- Delete handler ---
+  async function handleDelete(rowNum: number) {
+    if (readOnly) return
+    const row = rows.find((r) => r.cashierRowNumber === rowNum)
+    if (!row || !row.id) return
 
-  // Reconcile drafts with persisted state when the context updates
-  // (post-server-save replacements, morning reset). We intentionally
-  // preserve any draft the user is actively editing — including ones
-  // that have not been saved yet — so realtime/refetch events do not
-  // wipe the cashier's in-progress entry. A draft is "in progress"
-  // when (a) it's saving, (b) it has an error, or (c) the user has
-  // typed at least one field but the row is not yet persisted (no id).
-  useEffect(() => {
-    setDrafts((prev) => {
-      const byNum = new Map<number, DraftRow>()
-      for (const d of prev) {
-        const userTouched =
-          !d.id &&
-          (d.staff.trim() !== '' ||
-            d.course.trim() !== '' ||
-            d.duration.trim() !== '' ||
-            d.method.trim() !== '' ||
-            d.timeIn.trim() !== '' ||
-            d.flags.trim() !== '' ||
-            d.comment.trim() !== '' ||
-            (d.cash !== '' && d.cash !== '0') ||
-            (d.qr !== '' && d.qr !== '0') ||
-            (d.credit !== '' && d.credit !== '0'))
-        if (d.saving || d.saveError || userTouched) {
-          byNum.set(d.cashierRowNumber, d)
-        }
+    const rowId = buildRowId(branch, businessDate, row.cashierRowNumber)
+    updateRow(rowNum, () => blankDraft(rowNum))
+
+    try {
+      const result = await deleteTransaction({ rowId })
+      if (!result.ok) {
+        toast({ message: `Delete failed: ${result.message}`, variant: 'error' })
       }
-      for (const r of transactions) {
-        if (!byNum.has(r.cashierRowNumber)) {
-          byNum.set(r.cashierRowNumber, rowToDraft(r))
-        }
+    } catch (err) {
+      toast({ message: `Delete failed: ${err instanceof Error ? err.message : 'Network error'}`, variant: 'error' })
+    }
+  }
+
+  // --- Footer actions ---
+  function addRows() {
+    setRows((prev) => {
+      const maxNum = prev.reduce((acc, r) => Math.max(acc, r.cashierRowNumber), 0)
+      const added: DraftRow[] = []
+      for (let i = 1; i <= ADD_BATCH; i++) {
+        added.push(blankDraft(maxNum + i))
       }
-      const highest = transactions.reduce(
-        (acc, r) => Math.max(acc, r.cashierRowNumber),
-        0,
-      )
-      const target = Math.max(visibleRowCount, highest)
-      const next: DraftRow[] = []
-      for (let i = 1; i <= target; i++) {
-        next.push(byNum.get(i) ?? blankDraft(i))
+      return [...prev, ...added]
+    })
+  }
+
+  function clearUnsaved() {
+    setRows(buildInitialRows(transactions, INITIAL_ROWS))
+  }
+
+  function handleRefresh() {
+    void refreshAll().then(() => {
+      // After refresh, rebuild rows from fresh transactions
+      setRows(buildInitialRows(ctx.transactions, Math.max(INITIAL_ROWS, rows.length)))
+    })
+  }
+
+  // --- Staff options for select ---
+  const homeStaff = roster.filter((s) => s.isActive && !s.isFreelance && s.homeBranch === branch)
+  const otherStaff = roster.filter((s) => s.isActive && !s.isFreelance && s.homeBranch !== branch)
+  const freelancers = roster.filter((s) => s.isActive && s.isFreelance)
+
+  // --- Inline change handlers (synchronous auto-fill) ---
+  function onFieldChange(rowNum: number, field: keyof DraftRow, value: string) {
+    updateRow(rowNum, (prev) => {
+      let next = { ...prev, [field]: value }
+
+      // Auto-fill on course/duration/method/flags change
+      if (field === 'course' || field === 'duration' || field === 'method' || field === 'flags') {
+        next = applyAutoFill(next, branch, businessDate, { prices, regularRates, freelanceRates, roster })
       }
+
+      // Auto-fill time-out when duration changes and timeIn is set
+      if (field === 'duration' && next.timeIn) {
+        const tout = computeTimeOut(next.timeIn, next.duration)
+        if (tout) next.timeOut = tout
+      }
+
       return next
     })
-  }, [transactions, visibleRowCount])
+  }
 
-  function updateDraft(idx: number, next: DraftRow) {
-    setDrafts((prev) => {
-      const copy = [...prev]
-      copy[idx] = next
-      return copy
+  function onTimeInBlur(rowNum: number) {
+    updateRow(rowNum, (prev) => {
+      if (!prev.timeIn.trim()) return prev
+      const result = parseTimeInput(prev.timeIn)
+      if (!result.valid) return prev
+      const formatted = result.formatted
+      const tout = computeTimeOut(formatted, prev.duration)
+      return { ...prev, timeIn: formatted, timeOut: tout || prev.timeOut }
     })
   }
 
-  const persistRow = useCallback(
-    async (rowToSave: DraftRow) => {
-      const payload = draftToPayload(rowToSave, branch)
-      const rowId = buildRowId(branch, businessDate, rowToSave.cashierRowNumber)
-
-      // Optimistic projection — push a synthetic TransactionRow into
-      // context so the table, panels, and queue all see the row right
-      // away.
-      const optimistic: TransactionRow = {
-        id: rowToSave.id || rowId,
-        branch,
-        businessDate,
-        cashierRowNumber: rowToSave.cashierRowNumber,
-        staff: rowToSave.staff,
-        course: rowToSave.course as TransactionRow['course'],
-        duration: Number(rowToSave.duration) as TransactionRow['duration'],
-        timeIn: rowToSave.timeIn || null,
-        timeOut: rowToSave.timeOut || null,
-        method: rowToSave.method,
-        addon: Number(rowToSave.addon) || 0,
-        baseCommission: Number(rowToSave.baseCommission) || 0,
-        balmBonus: Number(rowToSave.balmBonus) || 0,
-        bookingBonus: Number(rowToSave.bookingBonus) || 0,
-        totalCommission: Number(rowToSave.totalCommission) || 0,
-        cash: Number(rowToSave.cash) || 0,
-        qr: Number(rowToSave.qr) || 0,
-        credit: Number(rowToSave.credit) || 0,
-        price: Number(rowToSave.price) || 0,
-        flags: rowToSave.flags,
-        comment: rowToSave.comment,
-        createdAt: '',
-        updatedAt: '',
-        createdBy: null,
-      }
-      addOptimistic(optimistic)
-
-      // Mark the draft "saving" so the row UI shows a spinner.
-      setDrafts((prev) =>
-        prev.map((d) =>
-          d.cashierRowNumber === rowToSave.cashierRowNumber
-            ? { ...d, saving: true, saveError: undefined }
-            : d,
-        ),
-      )
-
-      try {
-        const result = await writeTransaction(payload)
-        if (result.ok) {
-          // Map the persisted server row into the context shape and
-          // replace the optimistic projection. The action returns
-          // its own camelCase projection that's almost identical to
-          // `TransactionRow` — coerce the few that differ.
-          const r = result.row
-          const persistedRow: TransactionRow = {
-            id: r.id,
-            branch: r.branch,
-            businessDate: r.businessDate,
-            cashierRowNumber: r.cashierRowNumber,
-            staff: r.staff,
-            course: r.course,
-            duration: r.duration,
-            timeIn: r.timeIn,
-            timeOut: r.timeOut,
-            method: r.method,
-            addon: r.addon,
-            baseCommission: r.baseCommission,
-            balmBonus: r.balmBonus,
-            bookingBonus: r.bookingBonus,
-            totalCommission: r.totalCommission,
-            cash: r.cash,
-            qr: r.qr,
-            credit: r.credit,
-            price: r.price,
-            flags: r.flags,
-            comment: r.comment,
-            createdAt: r.createdAt,
-            updatedAt: r.updatedAt,
-            createdBy: r.createdBy,
-          }
-          replaceOptimistic(persistedRow)
-          setDrafts((prev) =>
-            prev.map((d) =>
-              d.cashierRowNumber === rowToSave.cashierRowNumber
-                ? { ...rowToDraft(persistedRow), overrides: rowToSave.overrides }
-                : d,
-            ),
-          )
-          return
-        }
-        // Failure path. Decide between terminal vs queue-for-retry.
-        if (TERMINAL_CODES.has(result.code)) {
-          setDrafts((prev) =>
-            prev.map((d) =>
-              d.cashierRowNumber === rowToSave.cashierRowNumber
-                ? {
-                    ...d,
-                    saving: false,
-                    saveError: `${result.code}: ${result.message}`,
-                  }
-                : d,
-            ),
-          )
-          // DO NOT roll back the optimistic row. The cashier needs to
-          // see the row stay put with an error indicator so they can
-          // fix it (e.g. add payment) and the autosave retries on
-          // the next blur. Removing it on every terminal error caused
-          // the "I typed a name and it disappeared" bug.
-          return
-        }
-        if (isNetworkError(result.code)) {
-          // Queue for the offline worker to drain later.
-          await enqueue({
-            id: rowId,
-            kind: 'transaction',
-            payload,
-            createdAt: new Date().toISOString(),
-            retries: 0,
-          })
-          setDrafts((prev) =>
-            prev.map((d) =>
-              d.cashierRowNumber === rowToSave.cashierRowNumber
-                ? { ...d, saving: false, saveError: undefined }
-                : d,
-            ),
-          )
-          return
-        }
-        // Unknown error — show on the row so the cashier sees it.
-        setDrafts((prev) =>
-          prev.map((d) =>
-            d.cashierRowNumber === rowToSave.cashierRowNumber
-              ? {
-                  ...d,
-                  saving: false,
-                  saveError: `${result.code}: ${result.message}`,
-                }
-              : d,
-          ),
-        )
-      } catch (err) {
-        // Network exception — queue and let the worker handle it.
-        await enqueue({
-          id: rowId,
-          kind: 'transaction',
-          payload,
-          createdAt: new Date().toISOString(),
-          retries: 0,
-          lastError: err instanceof Error ? err.message : String(err),
-        })
-        setDrafts((prev) =>
-          prev.map((d) =>
-            d.cashierRowNumber === rowToSave.cashierRowNumber
-              ? { ...d, saving: false, saveError: undefined }
-              : d,
-          ),
-        )
-      }
-    },
-    [branch, businessDate, addOptimistic, replaceOptimistic, removeOptimistic],
-  )
-
-  const onCommit = useCallback(
-    (rowToSave: DraftRow) => {
-      if (readOnly) return
-      // The row passed here may be stale (from the previous render
-      // cycle). Read the latest draft from state to ensure we save
-      // the most up-to-date values including any field that was just
-      // changed via onChange in the same event loop.
-      setDrafts((currentDrafts) => {
-        const latest = currentDrafts.find(
-          (d) => d.cashierRowNumber === rowToSave.cashierRowNumber,
-        )
-        const toSave = latest ?? rowToSave
-        if (!isSaveable(toSave)) return currentDrafts
-        void persistRow(toSave)
-        return currentDrafts
-      })
-    },
-    [readOnly, persistRow],
-  )
-
-  const onDelete = useCallback(
-    async (rowToDelete: DraftRow) => {
-      if (readOnly) return
-      if (!rowToDelete.id) return
-      const rowId = buildRowId(
-        branch,
-        businessDate,
-        rowToDelete.cashierRowNumber,
-      )
-
-      // Capture snapshot for potential undo (we re-add it on undo, then
-      // re-fire writeTransaction with the same rowId so the row is
-      // recreated server-side too — idempotent upsert handles that).
-      const snapshot: DraftRow = { ...rowToDelete, saving: false, saveError: undefined }
-
-      // Optimistic removal — drop from context immediately so the
-      // panels update.
-      removeOptimistic(rowToDelete.id)
-      setDrafts((prev) =>
-        prev.map((d) =>
-          d.cashierRowNumber === rowToDelete.cashierRowNumber
-            ? blankDraft(d.cashierRowNumber)
-            : d,
-        ),
-      )
-
-      // 5-second undo window. If the cashier hits Undo within that
-      // window, restore the row locally AND re-fire writeTransaction
-      // (since the deletion would already have committed). If the
-      // window passes, fire the actual deleteTransaction.
-      let undone = false
-      toast({
-        message: `Row ${rowToDelete.cashierRowNumber} deleted (${rowToDelete.staff || 'empty'}).`,
-        variant: 'default',
-        durationMs: 5000,
-        action: {
-          label: 'Undo',
-          onClick: () => {
-            undone = true
-            // Restore locally.
-            const restoredRow: TransactionRow = {
-              id: rowToDelete.id,
-              branch,
-              businessDate,
-              cashierRowNumber: rowToDelete.cashierRowNumber,
-              staff: rowToDelete.staff,
-              course: rowToDelete.course as TransactionRow['course'],
-              duration: Number(rowToDelete.duration) as TransactionRow['duration'],
-              timeIn: rowToDelete.timeIn || null,
-              timeOut: rowToDelete.timeOut || null,
-              method: rowToDelete.method,
-              addon: Number(rowToDelete.addon) || 0,
-              baseCommission: Number(rowToDelete.baseCommission) || 0,
-              balmBonus: Number(rowToDelete.balmBonus) || 0,
-              bookingBonus: Number(rowToDelete.bookingBonus) || 0,
-              totalCommission: Number(rowToDelete.totalCommission) || 0,
-              cash: Number(rowToDelete.cash) || 0,
-              qr: Number(rowToDelete.qr) || 0,
-              credit: Number(rowToDelete.credit) || 0,
-              price: Number(rowToDelete.price) || 0,
-              flags: rowToDelete.flags,
-              comment: rowToDelete.comment,
-              createdAt: '',
-              updatedAt: '',
-              createdBy: null,
-            }
-            addOptimistic(restoredRow)
-            setDrafts((prev) =>
-              prev.map((d) =>
-                d.cashierRowNumber === rowToDelete.cashierRowNumber
-                  ? snapshot
-                  : d,
-              ),
-            )
-            // Re-fire writeTransaction so the server has the row again.
-            void persistRow(snapshot)
-          },
-        },
-        onTimeout: () => {
-          // Window elapsed — commit the deletion to the server.
-          if (undone) return
-          void deleteTransaction({ rowId }).then((result) => {
-            if (!result.ok) {
-              // Couldn't reach the server. Restore the row locally
-              // and tell the cashier.
-              setDrafts((prev) =>
-                prev.map((d) =>
-                  d.cashierRowNumber === rowToDelete.cashierRowNumber
-                    ? {
-                        ...snapshot,
-                        saveError: `${result.code}: ${result.message}`,
-                      }
-                    : d,
-                ),
-              )
-              toast({
-                message: `Could not delete row ${rowToDelete.cashierRowNumber}: ${result.message}`,
-                variant: 'error',
-              })
-            }
-          })
-        },
-      })
-    },
-    [readOnly, branch, businessDate, addOptimistic, removeOptimistic, persistRow],
-  )
-
-  function addRows() {
-    setVisibleRowCount((n) => n + ADD_BATCH)
+  function onTimeOutBlur(rowNum: number) {
+    updateRow(rowNum, (prev) => {
+      if (!prev.timeOut.trim()) return prev
+      const result = parseTimeInput(prev.timeOut)
+      if (!result.valid) return prev
+      return { ...prev, timeOut: result.formatted }
+    })
   }
 
-  // Memoise the row content so the table doesn't re-render every
-  // child on every keystroke in another row.
-  const rowsView = useMemo(() => drafts, [drafts])
+  function onFlagToggle(rowNum: number, flag: string) {
+    updateRow(rowNum, (prev) => {
+      const current = prev.flags
+        .split(',')
+        .map((f) => f.trim())
+        .filter(Boolean)
+      const has = current.includes(flag)
+      const next = has ? current.filter((f) => f !== flag) : [...current, flag]
+      const flagStr = next.join(',')
+      let updated = { ...prev, flags: flagStr }
+      updated = applyAutoFill(updated, branch, businessDate, { prices, regularRates, freelanceRates, roster })
+      return updated
+    })
+  }
+
+  // --- Render ---
+  const inputCls =
+    'w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 rounded px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]'
+  const selectCls =
+    'w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 rounded px-1 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]'
+  const numCls =
+    'w-[56px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 rounded px-1.5 py-1 text-xs text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]'
 
   return (
     <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
@@ -605,7 +367,7 @@ export default function SessionTable() {
         <table className="min-w-full text-xs">
           <thead className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/40 sticky top-0 z-10">
             <tr>
-              <th className="px-1 py-1.5 text-right">#</th>
+              <th className="px-1 py-1.5 text-right w-8">#</th>
               <th className="px-1 py-1.5 text-right">Price</th>
               <th className="px-1 py-1.5 text-left">Staff</th>
               <th className="px-1 py-1.5 text-left">Course</th>
@@ -618,63 +380,335 @@ export default function SessionTable() {
               <th className="px-1 py-1.5 text-right">Cash</th>
               <th className="px-1 py-1.5 text-right">QR</th>
               <th className="px-1 py-1.5 text-right">Credit</th>
-              <th className="px-1 py-1.5 text-left">Balm/Book</th>
+              <th className="px-1 py-1.5 text-left">Balm&amp;Book</th>
               <th className="px-1 py-1.5 text-left">Comment</th>
-              <th className="px-1 py-1.5"> </th>
+              <th className="px-1 py-1.5 w-20"> </th>
             </tr>
           </thead>
           <tbody>
-            {rowsView.map((d, idx) => (
-              <SessionRow
-                key={d.cashierRowNumber}
-                row={d}
-                branch={branch}
-                businessDate={businessDate}
-                roster={roster}
-                prices={prices}
-                regularRates={regularRates}
-                freelanceRates={freelanceRates}
-                readOnly={readOnly}
-                onChange={(next) => updateDraft(idx, next)}
-                onCommit={onCommit}
-                onDelete={onDelete}
-              />
-            ))}
+            {rows.map((row) => {
+              const rn = row.cashierRowNumber
+              const flags = row.flags.split(',').map((f) => f.trim()).filter(Boolean)
+              const rowBg = row.saving
+                ? 'opacity-70'
+                : rn % 2 === 0
+                  ? 'bg-zinc-50/70 dark:bg-zinc-800/30'
+                  : ''
+
+              return (
+                <tr
+                  key={rn}
+                  className={`border-b border-zinc-100 dark:border-zinc-800 ${rowBg}`}
+                  onFocus={() => handleCellFocus(rn)}
+                >
+                  {/* Row number */}
+                  <td className="px-1 py-0.5 text-[10px] text-zinc-500 text-right tabular-nums align-middle">
+                    {rn}
+                  </td>
+
+                  {/* Price */}
+                  <td className="px-0.5 py-0 align-middle">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      aria-label={`Price row ${rn}`}
+                      value={row.price}
+                      disabled={readOnly}
+                      onChange={(e) => onFieldChange(rn, 'price', e.target.value)}
+                      className={numCls}
+                    />
+                  </td>
+
+                  {/* Staff */}
+                  <td className="px-0.5 py-0 align-middle min-w-[100px]">
+                    <select
+                      aria-label={`Staff row ${rn}`}
+                      value={row.staff}
+                      disabled={readOnly}
+                      onChange={(e) => onFieldChange(rn, 'staff', e.target.value)}
+                      className={selectCls}
+                    >
+                      <option value="">—</option>
+                      <optgroup label={`${branch} staff`}>
+                        {homeStaff.map((s) => (
+                          <option key={s.id} value={s.name}>{s.name}</option>
+                        ))}
+                      </optgroup>
+                      {otherStaff.length > 0 && (
+                        <optgroup label="Other branch">
+                          {otherStaff.map((s) => (
+                            <option key={s.id} value={s.name}>{s.name} ({s.homeBranch.slice(0, 3)})</option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {freelancers.length > 0 && (
+                        <optgroup label="Freelance">
+                          {freelancers.map((s) => (
+                            <option key={s.id} value={s.name}>{s.name}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </select>
+                  </td>
+
+                  {/* Course */}
+                  <td className="px-0.5 py-0 align-middle min-w-[64px]">
+                    <select
+                      aria-label={`Course row ${rn}`}
+                      value={row.course}
+                      disabled={readOnly}
+                      onChange={(e) => onFieldChange(rn, 'course', e.target.value)}
+                      className={selectCls}
+                    >
+                      <option value="">—</option>
+                      {COURSES.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </td>
+
+                  {/* Duration */}
+                  <td className="px-0.5 py-0 align-middle min-w-[58px]">
+                    <select
+                      aria-label={`Duration row ${rn}`}
+                      value={row.duration}
+                      disabled={readOnly}
+                      onChange={(e) => onFieldChange(rn, 'duration', e.target.value)}
+                      className={selectCls}
+                    >
+                      <option value="">—</option>
+                      {DURATIONS.map((d) => (
+                        <option key={d} value={String(d)}>{d}</option>
+                      ))}
+                    </select>
+                  </td>
+
+                  {/* Time In */}
+                  <td className="px-0.5 py-0 align-middle">
+                    <input
+                      type="text"
+                      aria-label={`Time in row ${rn}`}
+                      value={row.timeIn}
+                      placeholder="HH:mm"
+                      disabled={readOnly}
+                      onChange={(e) => onFieldChange(rn, 'timeIn', e.target.value)}
+                      onBlur={() => onTimeInBlur(rn)}
+                      className={`w-[62px] ${inputCls}`}
+                    />
+                  </td>
+
+                  {/* Time Out */}
+                  <td className="px-0.5 py-0 align-middle">
+                    <input
+                      type="text"
+                      aria-label={`Time out row ${rn}`}
+                      value={row.timeOut}
+                      placeholder="auto"
+                      disabled={readOnly}
+                      onChange={(e) => onFieldChange(rn, 'timeOut', e.target.value)}
+                      onBlur={() => onTimeOutBlur(rn)}
+                      className={`w-[62px] ${inputCls}`}
+                    />
+                  </td>
+
+                  {/* Add-on */}
+                  <td className="px-0.5 py-0 align-middle">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      aria-label={`Add-on row ${rn}`}
+                      value={row.addon}
+                      disabled={readOnly}
+                      onChange={(e) => onFieldChange(rn, 'addon', e.target.value)}
+                      className={numCls}
+                    />
+                  </td>
+
+                  {/* Commission */}
+                  <td className="px-0.5 py-0 align-middle">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      aria-label={`Commission row ${rn}`}
+                      value={row.totalCommission}
+                      disabled={readOnly}
+                      onChange={(e) => onFieldChange(rn, 'totalCommission', e.target.value)}
+                      className={`${numCls} font-semibold`}
+                    />
+                  </td>
+
+                  {/* Method */}
+                  <td className="px-0.5 py-0 align-middle min-w-[88px]">
+                    <select
+                      aria-label={`Method row ${rn}`}
+                      value={row.method}
+                      disabled={readOnly}
+                      onChange={(e) => onFieldChange(rn, 'method', e.target.value)}
+                      className={selectCls}
+                    >
+                      <option value="">—</option>
+                      {TRANSACTION_METHODS.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </td>
+
+                  {/* Cash */}
+                  <td className="px-0.5 py-0 align-middle">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      aria-label={`Cash row ${rn}`}
+                      value={row.cash}
+                      disabled={readOnly}
+                      onChange={(e) => onFieldChange(rn, 'cash', e.target.value)}
+                      className={numCls}
+                    />
+                  </td>
+
+                  {/* QR */}
+                  <td className="px-0.5 py-0 align-middle">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      aria-label={`QR row ${rn}`}
+                      value={row.qr}
+                      disabled={readOnly}
+                      onChange={(e) => onFieldChange(rn, 'qr', e.target.value)}
+                      className={numCls}
+                    />
+                  </td>
+
+                  {/* Credit */}
+                  <td className="px-0.5 py-0 align-middle">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      aria-label={`Credit row ${rn}`}
+                      value={row.credit}
+                      disabled={readOnly}
+                      onChange={(e) => onFieldChange(rn, 'credit', e.target.value)}
+                      className={numCls}
+                    />
+                  </td>
+
+                  {/* Balm & Book flags */}
+                  <td className="px-0.5 py-0 align-middle min-w-[160px]">
+                    <div className="flex items-center gap-2 text-[10px]">
+                      <label className="flex items-center gap-0.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={flags.includes('Staff Balm')}
+                          disabled={readOnly}
+                          onChange={() => onFlagToggle(rn, 'Staff Balm')}
+                          className="rounded border-zinc-300 dark:border-zinc-600"
+                        />
+                        <span>Staff Balm</span>
+                      </label>
+                      <label className="flex items-center gap-0.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={flags.includes('Customer Balm')}
+                          disabled={readOnly}
+                          onChange={() => onFlagToggle(rn, 'Customer Balm')}
+                          className="rounded border-zinc-300 dark:border-zinc-600"
+                        />
+                        <span>Cust Balm</span>
+                      </label>
+                      <label className="flex items-center gap-0.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={flags.includes('Booking')}
+                          disabled={readOnly}
+                          onChange={() => onFlagToggle(rn, 'Booking')}
+                          className="rounded border-zinc-300 dark:border-zinc-600"
+                        />
+                        <span>Booking</span>
+                      </label>
+                    </div>
+                  </td>
+
+                  {/* Comment */}
+                  <td className="px-0.5 py-0 align-middle min-w-[100px]">
+                    <input
+                      type="text"
+                      aria-label={`Comment row ${rn}`}
+                      value={row.comment}
+                      disabled={readOnly}
+                      onChange={(e) => onFieldChange(rn, 'comment', e.target.value)}
+                      className={inputCls}
+                    />
+                  </td>
+
+                  {/* Status / Actions */}
+                  <td className="px-1 py-0 align-middle text-center whitespace-nowrap">
+                    {row.saving && (
+                      <span className="text-zinc-400 text-sm" title="Saving">⏳</span>
+                    )}
+                    {row.id && !row.saving && (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-bold text-sm" title="Saved">✓</span>
+                    )}
+                    {row.saveError && (
+                      <span className="text-red-500 text-[10px] ml-1" title={row.saveError}>!</span>
+                    )}
+                    {!readOnly && isSaveable(row) && !row.saving && (
+                      <button
+                        type="button"
+                        onClick={() => handleSaveClick(rn)}
+                        className="ml-1 text-[10px] text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-0.5"
+                        title="Save row"
+                      >
+                        Save
+                      </button>
+                    )}
+                    {row.id && !readOnly && !row.saving && (
+                      <button
+                        type="button"
+                        aria-label={`Delete row ${rn}`}
+                        onClick={() => handleDelete(rn)}
+                        className="ml-1 text-zinc-400 hover:text-red-600 text-sm px-1"
+                        title="Delete"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
+
       <footer className="px-4 py-2.5 flex items-center justify-between gap-3 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/40">
         <div className="text-xs text-zinc-500">
-          {drafts.length} rows
-          {' · '}
-          {drafts.filter((d) => d.id).length} saved
+          {rows.length} rows · {rows.filter((d) => d.id).length} saved
         </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => {
-              // Clear only unsaved drafts from localStorage; saved rows
-              // stay because they come from the DB on next reload.
-              if (typeof window !== 'undefined') {
-                const key = `heals.draft.v1.${branch}.${businessDate}`
-                window.localStorage.removeItem(key)
-              }
-              setDrafts(buildInitialDrafts(transactions, INITIAL_BLANK_ROWS))
-              setVisibleRowCount(INITIAL_BLANK_ROWS)
-            }}
+            onClick={clearUnsaved}
             disabled={readOnly}
             title="Clear unsaved draft rows"
-            className="inline-flex items-center gap-1 rounded-md border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-1.5 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-md border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50"
           >
-            Clear rows
+            Clear unsaved
           </button>
           <button
             type="button"
             onClick={addRows}
             disabled={readOnly}
-            className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-1.5 text-xs font-medium hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50"
           >
             + Add {ADD_BATCH} rows
+          </button>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-1.5 text-xs font-medium hover:bg-zinc-50 dark:hover:bg-zinc-700"
+            title="Refresh from database"
+          >
+            ⟳ Refresh
           </button>
         </div>
       </footer>

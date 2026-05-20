@@ -335,7 +335,7 @@ export default async function CashierPage({
                 Sign out
               </button>
             </form>
-            <span className="text-[9px] text-zinc-400 font-mono" title="Build version">v8</span>
+            <span className="text-[9px] text-zinc-400 font-mono" title="Build version">v9</span>
           </div>
         </header>
 
