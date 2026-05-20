@@ -638,14 +638,34 @@ export default function SessionTable() {
           {' · '}
           {drafts.filter((d) => d.id).length} saved
         </div>
-        <button
-          type="button"
-          onClick={addRows}
-          disabled={readOnly}
-          className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50"
-        >
-          + Add {ADD_BATCH} rows
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              // Clear only unsaved drafts from localStorage; saved rows
+              // stay because they come from the DB on next reload.
+              if (typeof window !== 'undefined') {
+                const key = `heals.draft.v1.${branch}.${businessDate}`
+                window.localStorage.removeItem(key)
+              }
+              setDrafts(buildInitialDrafts(transactions, INITIAL_BLANK_ROWS))
+              setVisibleRowCount(INITIAL_BLANK_ROWS)
+            }}
+            disabled={readOnly}
+            title="Clear unsaved draft rows"
+            className="inline-flex items-center gap-1 rounded-md border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-1.5 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50"
+          >
+            Clear rows
+          </button>
+          <button
+            type="button"
+            onClick={addRows}
+            disabled={readOnly}
+            className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50"
+          >
+            + Add {ADD_BATCH} rows
+          </button>
+        </div>
       </footer>
     </section>
   )

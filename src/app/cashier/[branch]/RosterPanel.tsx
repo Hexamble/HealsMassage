@@ -4,15 +4,15 @@
  * heals-system-rebuild — RosterPanel
  *
  * Today's roster — toggle which home-branch staff are working today.
- * Walk-ins / freelancers don't go here: the cashier marks them by
- * choosing method=Freelance and typing the name in the Staff cell.
- * The roster panel stays narrow on purpose — fewer choices, fewer
- * mistakes.
+ * Inline form to add a brand-new staff member to the company roster.
+ * Tap a chip to toggle the staff on/off for today. Save commits to
+ * daily_roster via setBranchRoster.
  */
 
 import { useMemo, useState } from 'react'
 
 import { setBranchRoster } from '@/app/actions/setBranchRoster'
+import { saveStaff } from '@/app/actions/saveStaff'
 import type { StaffMember } from '@/domain/types'
 
 import { useCashier } from './CashierContext'
@@ -22,13 +22,16 @@ const TOP_ROSTER_SIZE = 7
 export default function RosterPanel() {
   const {
     transactions,
-    roster,
+    roster: initialRoster,
     dailyRoster,
     branch,
     businessDate,
     readOnly,
     setDailyRoster,
   } = useCashier()
+
+  // Local roster copy so newly-added staff appear without a page reload.
+  const [roster, setRoster] = useState<StaffMember[]>(initialRoster)
 
   const displayedRoster = useMemo(() => {
     if (dailyRoster.length > 0) return dailyRoster
@@ -54,6 +57,12 @@ export default function RosterPanel() {
   const [saving, setSaving] = useState(false)
   const [pickedIds, setPickedIds] = useState<string[]>([])
 
+  // New-staff inline form
+  const [addingNew, setAddingNew] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [addError, setAddError] = useState<string | null>(null)
+  const [addSaving, setAddSaving] = useState(false)
+
   function openEdit() {
     const lcSet = new Set(displayedRoster.map((n) => n.toLowerCase()))
     const ids = roster
@@ -67,6 +76,9 @@ export default function RosterPanel() {
       .map((s) => s.id)
     setPickedIds(ids)
     setError(null)
+    setAddingNew(false)
+    setNewName('')
+    setAddError(null)
     setEditing(true)
   }
 
@@ -93,6 +105,44 @@ export default function RosterPanel() {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function addNewStaff() {
+    const name = newName.trim()
+    if (!name) return
+    setAddSaving(true)
+    setAddError(null)
+    try {
+      const result = await saveStaff({
+        name,
+        homeBranch: branch,
+        isFreelance: false,
+        isActive: true,
+      })
+      if (!result.ok) {
+        setAddError(result.message)
+        return
+      }
+      const newMember: StaffMember = {
+        id: result.row.id,
+        name: result.row.name,
+        homeBranch: result.row.homeBranch,
+        isFreelance: result.row.isFreelance,
+        isActive: result.row.isActive,
+      }
+      setRoster((prev) =>
+        prev.some((s) => s.id === newMember.id) ? prev : [...prev, newMember],
+      )
+      setPickedIds((prev) =>
+        prev.includes(result.row.id) ? prev : [...prev, result.row.id],
+      )
+      setNewName('')
+      setAddingNew(false)
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setAddSaving(false)
     }
   }
 
@@ -123,8 +173,9 @@ export default function RosterPanel() {
         <div className="px-4 py-3 flex flex-wrap gap-2">
           {displayedRoster.length === 0 ? (
             <span className="text-sm text-zinc-500">
-              No roster set yet. Click <span className="font-semibold">Manage</span>{' '}
-              to pick today&apos;s staff, or type names in the table.
+              No roster set yet. Click{' '}
+              <span className="font-semibold">Manage</span> to pick
+              today&apos;s staff.
             </span>
           ) : (
             displayedRoster.map((name, idx) => (
@@ -145,17 +196,84 @@ export default function RosterPanel() {
       {editing && (
         <div className="px-4 py-3 space-y-3">
           <p className="text-xs text-zinc-500">
-            Pick {branch} staff working today. For freelancers or visiting
-            staff, choose method = Freelance (or any EXTRA) in the table and
-            type the name there.
+            Tap a name to toggle on/off. Coloured = working today.
           </p>
-          <RosterPicker
-            roster={roster}
-            picked={pickedIds}
-            onToggle={togglePick}
-            branch={branch}
-          />
-          <div className="flex items-center justify-end gap-2">
+
+          <div className="flex flex-wrap gap-2">
+            {roster
+              .filter((s) => s.homeBranch === branch && !s.isFreelance && s.isActive)
+              .map((s) => (
+                <Chip
+                  key={s.id}
+                  label={s.name}
+                  active={pickedIds.includes(s.id)}
+                  onClick={() => togglePick(s.id)}
+                />
+              ))}
+            {roster.filter(
+              (s) => s.homeBranch === branch && !s.isFreelance && s.isActive,
+            ).length === 0 && (
+              <p className="text-xs italic text-zinc-500">
+                No {branch} staff yet.
+              </p>
+            )}
+          </div>
+
+          {/* Inline add-new-staff */}
+          {!addingNew ? (
+            <button
+              type="button"
+              onClick={() => setAddingNew(true)}
+              className="inline-flex items-center gap-1 rounded-full border border-dashed border-zinc-400 dark:border-zinc-600 px-3 py-1 text-xs text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              + Add new staff
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void addNewStaff()
+                  }
+                  if (e.key === 'Escape') {
+                    setAddingNew(false)
+                    setNewName('')
+                  }
+                }}
+                placeholder="New staff name"
+                autoFocus
+                className="flex-1 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
+              />
+              <button
+                type="button"
+                onClick={() => void addNewStaff()}
+                disabled={addSaving || !newName.trim()}
+                className="rounded-md bg-[var(--theme-primary)] text-[var(--theme-primary-foreground)] px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+              >
+                {addSaving ? '…' : 'Save'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAddingNew(false)
+                  setNewName('')
+                  setAddError(null)
+                }}
+                className="rounded-md border border-zinc-300 dark:border-zinc-600 px-2 py-1.5 text-xs"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+          {addError && (
+            <p className="text-xs text-zinc-500">{addError}</p>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-1">
             {error && (
               <span className="text-xs text-zinc-600 dark:text-zinc-400 mr-auto">
                 {error}
@@ -183,41 +301,6 @@ export default function RosterPanel() {
   )
 }
 
-function RosterPicker({
-  roster,
-  picked,
-  onToggle,
-  branch,
-}: {
-  roster: StaffMember[]
-  picked: string[]
-  onToggle: (id: string) => void
-  branch: string
-}) {
-  const branchStaff = roster.filter(
-    (s) => !s.isFreelance && s.isActive && s.homeBranch === branch,
-  )
-  if (branchStaff.length === 0) {
-    return (
-      <p className="text-xs italic text-zinc-500">
-        No {branch} staff yet. Add them via Boss HQ → Roster.
-      </p>
-    )
-  }
-  return (
-    <div className="flex flex-wrap gap-2">
-      {branchStaff.map((s) => (
-        <Chip
-          key={s.id}
-          label={s.name}
-          active={picked.includes(s.id)}
-          onClick={() => onToggle(s.id)}
-        />
-      ))}
-    </div>
-  )
-}
-
 function Chip({
   label,
   active,
@@ -236,7 +319,7 @@ function Chip({
         'rounded-full border px-3 py-1 text-sm transition-colors',
         active
           ? 'border-[var(--theme-primary)] bg-[var(--theme-primary)] text-[var(--theme-primary-foreground)]'
-          : 'border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700',
+          : 'border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700',
       ].join(' ')}
     >
       {label}

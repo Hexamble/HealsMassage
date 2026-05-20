@@ -475,7 +475,18 @@ export function CashierProvider(props: CashierProviderProps) {
     await offlineHandleRef.current?.drainNow()
   }, [])
 
-  // -- Morning reset -------------------------------------------------------
+  // -- Focus-based refresh (picks up mirror rows from other branches) ----
+  // When the cashier switches from the Bishop tab back to Kimberry,
+  // the mirror EXTRA BS row that was created server-side won't appear
+  // until the page re-renders. Refreshing on window focus fixes this
+  // without polling and without WebSockets.
+  useEffect(() => {
+    function onFocus() {
+      void refreshAll()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [refreshAll])
   // Poll every 30s; when getBusinessDate(now) advances past the
   // currently-displayed date, the cashier table needs to clear and
   // refetch. The DB still holds yesterday's rows; only the view

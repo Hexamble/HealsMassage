@@ -63,6 +63,7 @@ import EarningsPanel from './panels/EarningsPanel'
 import FreelanceMiniSummary from './panels/FreelanceMiniSummary'
 import SummaryPanel from './panels/SummaryPanel'
 import Toaster from '@/components/cashier/Toaster'
+import RefreshButton from '@/components/cashier/RefreshButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -298,6 +299,7 @@ export default async function CashierPage({
           <div className="flex items-center gap-2">
             <PendingSyncBadge />
             <ConnectionIndicator />
+            <RefreshButton />
             {isCrossBranchPeek && (
               <span className="text-[10px] bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 rounded-full px-2 py-0.5 font-medium">
                 👁 View only
