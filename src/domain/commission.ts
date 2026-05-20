@@ -240,8 +240,9 @@ export function parseFlags(flagsStr: string | undefined | null): ParsedFlags {
  *
  * The Customer Balm surcharge is applied at price lookup time so the
  * cashier sees the same number on the receipt that the customer pays.
- * Staff Balm bumps commission only — it is NOT priced into the
- * customer total.
+ * Staff Balm ALSO adds +RM 10 to the customer price (matching the
+ * legacy Sheet formula which uses SEARCH("Balm",Flags) — a substring
+ * match that fires for both "Staff Balm" and "Customer Balm").
  *
  * Validates: Heals user formula spec (commission.ts contract update).
  */
@@ -255,8 +256,12 @@ export function customerPriceWithFlags(
 ): number {
   if (isExtraMethod(String(method ?? '').trim())) return 0
   const base = lookupCustomerPrice(course, duration, branch, priceTable)
+  // Match the legacy Sheet formula: ANY "Balm" token (Staff Balm OR
+  // Customer Balm) adds +RM 10 to the customer price. The Sheet uses
+  // SEARCH("Balm",Flags) which is a substring match, so a row with
+  // "Staff Balm,Booking" gets the same +10 as "Customer Balm".
   const f = parseFlags(flags)
-  return base + (f.customerBalm ? 10 : 0)
+  return base + (f.customerBalm || f.staffBalm ? 10 : 0)
 }
 
 /**
