@@ -513,7 +513,20 @@ function SessionRowImpl({
   }
 
   function changeFlags(v: string) {
-    onChange({ ...row, flags: v })
+    // Recompute balm + booking + price when flags change.
+    // Customer Balm flips +RM10 onto the price; Staff Balm adds RM3
+    // commission; Booking adds 3/4.5/6 by duration. The auto-fill
+    // helper handles all three based on the new flag string.
+    const next = applyRateAutoFill(
+      { ...row, flags: v },
+      branch,
+      businessDate,
+      prices,
+      regularRates,
+      freelanceRates,
+      staffIsFreelance,
+    )
+    onChange(next)
   }
   function commitFlags() {
     onCommit(row)

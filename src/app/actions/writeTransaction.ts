@@ -608,6 +608,10 @@ export async function writeTransaction(
     staffRow.home_branch !== branch &&
     (data.method === 'CASH' || data.method === 'QR' || data.method === 'CREDIT')
   ) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[writeTransaction] auto-mirror trigger: source=${branch} row=${cashierRowNumber} staff=${resolvedStaffName} home=${staffRow.home_branch}`,
+    )
     try {
       const mirrorBranch = staffRow.home_branch as Branch
       const mirrorRowNum =
@@ -623,16 +627,21 @@ export async function writeTransaction(
         time_in: '',
         time_out: '',
         method: BRANCH_TO_EXTRA[branch],
-        addon: resolvedAddon,
-        base_commission: resolvedBase,
-        balm_bonus: resolvedBalm,
-        booking_bonus: resolvedBook,
-        total_commission: totalCommission,
+        // EXTRA rows are notes, not money. All amounts MUST be zero
+        // so the salary board's canonical view can attribute the
+        // commission to the destination branch (where the real row
+        // lives) without double-counting. The home-branch cashier
+        // sees the row in their session table for awareness only.
+        addon: 0,
+        base_commission: 0,
+        balm_bonus: 0,
+        booking_bonus: 0,
+        total_commission: 0,
         cash: 0,
         qr: 0,
         credit: 0,
         price: 0,
-        flags: ext.flags ?? '',
+        flags: '',
         comment: `(auto-mirror from ${branch} row #${cashierRowNumber})`,
       }
       // Service-role client is untyped (`SupabaseClient<any, ...>`) so its
