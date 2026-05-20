@@ -141,8 +141,8 @@ export default function SalaryGrid({ sections, dayHeaders, today }: Props) {
           className={[
             'rounded-md border px-4 py-1.5 text-sm font-medium transition-colors',
             editMode
-              ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100'
-              : 'border-zinc-300 bg-white dark:bg-zinc-900 text-zinc-700 hover:bg-zinc-50 dark:bg-zinc-800',
+              ? 'border-rose-400 bg-rose-100 text-rose-800 hover:bg-rose-200 dark:border-rose-700 dark:bg-rose-950/50 dark:text-rose-200 dark:hover:bg-rose-900/60'
+              : 'border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700',
           ].join(' ')}
         >
           {editMode ? '✓ Done editing' : '✏ Edit'}

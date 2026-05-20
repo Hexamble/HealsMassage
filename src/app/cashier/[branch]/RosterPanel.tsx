@@ -1,29 +1,13 @@
 'use client'
 
 /**
- * heals-system-rebuild — RosterPanel (Task 10.2)
+ * heals-system-rebuild — RosterPanel
  *
- * Header strip showing today's roster — the staff working at this
- * branch today. Two ways to set it:
- *
- *   1. "Manage roster" → modal with a chip-style picker over active
- *      branch staff. Click chips to toggle on/off, plus a free-text
- *      input to add walk-in freelancers ("borrowed from another shop"
- *      or one-off names) by name. Save commits to `daily_roster` via
- *      `setBranchRoster`. Both the QueueBoard and the StaffPicker
- *      see the new roster immediately.
- *
- *   2. Type staff names directly into the SessionTable rows — the
- *      QueueBoard falls back to the top-7 distinct names from the
- *      table when no daily_roster is set, mirroring the legacy
- *      Sheet workflow.
- *
- *  Freelancers are NOT pre-listed (per the user's note: "freelance
- *  doesn't belong to any shop, he just call in person, can be
- *  anyone"). The cashier types the freelance name into the free-text
- *  input below the chips; the typed token saves under a virtual id
- *  prefixed with "freelance:" so the action accepts it without a
- *  matching staff row.
+ * Today's roster — toggle which home-branch staff are working today.
+ * Walk-ins / freelancers don't go here: the cashier marks them by
+ * choosing method=Freelance and typing the name in the Staff cell.
+ * The roster panel stays narrow on purpose — fewer choices, fewer
+ * mistakes.
  */
 
 import { useMemo, useState } from 'react'
@@ -46,9 +30,6 @@ export default function RosterPanel() {
     setDailyRoster,
   } = useCashier()
 
-  // What we display when not editing: the saved daily roster takes
-  // priority; if empty, fall back to the top-7 distinct names from
-  // the table (legacy Sheet workflow).
   const displayedRoster = useMemo(() => {
     if (dailyRoster.length > 0) return dailyRoster
     const seen = new Set<string>()
@@ -72,13 +53,8 @@ export default function RosterPanel() {
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [pickedIds, setPickedIds] = useState<string[]>([])
-  const [walkInDraft, setWalkInDraft] = useState('')
-  const [walkIns, setWalkIns] = useState<string[]>([])
 
   function openEdit() {
-    // Pre-select roster members whose names appear in the saved
-    // dailyRoster (or, when empty, the top-7 derived names).
-    // Only match staff from THIS branch (not other branches).
     const lcSet = new Set(displayedRoster.map((n) => n.toLowerCase()))
     const ids = roster
       .filter(
@@ -90,14 +66,6 @@ export default function RosterPanel() {
       )
       .map((s) => s.id)
     setPickedIds(ids)
-    // Walk-ins = names in displayedRoster that don't match any roster row.
-    const knownLc = new Set(
-      roster
-        .filter((s) => s.homeBranch === branch && !s.isFreelance)
-        .map((s) => s.name.trim().toLowerCase()),
-    )
-    setWalkIns(displayedRoster.filter((n) => !knownLc.has(n.toLowerCase())))
-    setWalkInDraft('')
     setError(null)
     setEditing(true)
   }
@@ -106,11 +74,6 @@ export default function RosterPanel() {
     setSaving(true)
     setError(null)
     try {
-      // The server action only accepts UUIDs. Walk-ins (freelancers
-      // we don't have a staff row for) get persisted to the saved
-      // local view but skipped on the server side. They DO appear in
-      // the queue right away because we update context.dailyRoster
-      // directly from the full picked list.
       const result = await setBranchRoster({
         branch,
         businessDate,
@@ -120,12 +83,11 @@ export default function RosterPanel() {
         setError(`${result.code}: ${result.message}`)
         return
       }
-      // Build the human-readable name list for the queue.
       const namesById = new Map(roster.map((s) => [s.id, s.name]))
       const pickedNames = pickedIds
         .map((id) => namesById.get(id))
         .filter((n): n is string => !!n)
-      setDailyRoster([...pickedNames, ...walkIns])
+      setDailyRoster(pickedNames)
       setEditing(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -138,23 +100,6 @@ export default function RosterPanel() {
     setPickedIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     )
-  }
-
-  function addWalkIn() {
-    const name = walkInDraft.trim()
-    if (!name) return
-    if (
-      walkIns.some((n) => n.toLowerCase() === name.toLowerCase())
-    ) {
-      setWalkInDraft('')
-      return
-    }
-    setWalkIns((prev) => [...prev, name])
-    setWalkInDraft('')
-  }
-
-  function removeWalkIn(name: string) {
-    setWalkIns((prev) => prev.filter((n) => n !== name))
   }
 
   return (
@@ -178,8 +123,8 @@ export default function RosterPanel() {
         <div className="px-4 py-3 flex flex-wrap gap-2">
           {displayedRoster.length === 0 ? (
             <span className="text-sm text-zinc-500">
-              No roster set yet. Click <span className="font-semibold">Manage</span> to
-              pick today&apos;s staff, or type names in the table.
+              No roster set yet. Click <span className="font-semibold">Manage</span>{' '}
+              to pick today&apos;s staff, or type names in the table.
             </span>
           ) : (
             displayedRoster.map((name, idx) => (
@@ -200,8 +145,9 @@ export default function RosterPanel() {
       {editing && (
         <div className="px-4 py-3 space-y-3">
           <p className="text-xs text-zinc-500">
-            Select branch staff working today. For walk-in freelancers, type
-            the name in the box below and click <span className="font-semibold">Add</span>.
+            Pick {branch} staff working today. For freelancers or visiting
+            staff, choose method = Freelance (or any EXTRA) in the table and
+            type the name there.
           </p>
           <RosterPicker
             roster={roster}
@@ -209,54 +155,11 @@ export default function RosterPanel() {
             onToggle={togglePick}
             branch={branch}
           />
-          <div>
-            <h3 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1.5">
-              Walk-in / freelance (type name + Add)
-            </h3>
-            <div className="flex flex-wrap gap-2 mb-2">
-              {walkIns.map((name) => (
-                <span
-                  key={name}
-                  className="inline-flex items-center gap-1 rounded-full border border-zinc-300 dark:border-zinc-600 bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 px-3 py-1 text-sm"
-                >
-                  {name}
-                  <button
-                    type="button"
-                    aria-label={`Remove ${name}`}
-                    onClick={() => removeWalkIn(name)}
-                    className="text-zinc-500 hover:text-red-600"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                placeholder="Walk-in freelancer name"
-                value={walkInDraft}
-                onChange={(e) => setWalkInDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    addWalkIn()
-                  }
-                }}
-                className="flex-1 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]"
-              />
-              <button
-                type="button"
-                onClick={addWalkIn}
-                className="rounded-md border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-1.5 text-xs font-medium hover:bg-zinc-50 dark:hover:bg-zinc-700"
-              >
-                Add
-              </button>
-            </div>
-          </div>
           <div className="flex items-center justify-end gap-2">
             {error && (
-              <span className="text-xs text-red-600 mr-auto">{error}</span>
+              <span className="text-xs text-zinc-600 dark:text-zinc-400 mr-auto">
+                {error}
+              </span>
             )}
             <button
               type="button"
@@ -291,31 +194,26 @@ function RosterPicker({
   onToggle: (id: string) => void
   branch: string
 }) {
-  // Only show staff whose home_branch matches the current branch.
-  // Each shop manages its own roster — you don't see other shops'
-  // staff here. Borrowed staff are typed directly in the table.
   const branchStaff = roster.filter(
     (s) => !s.isFreelance && s.isActive && s.homeBranch === branch,
   )
+  if (branchStaff.length === 0) {
+    return (
+      <p className="text-xs italic text-zinc-500">
+        No {branch} staff yet. Add them via Boss HQ → Roster.
+      </p>
+    )
+  }
   return (
-    <div>
-      {branchStaff.length > 0 && (
-        <div>
-          <h3 className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-1.5">
-            {branch} staff
-          </h3>
-          <div className="flex flex-wrap gap-2">
-            {branchStaff.map((s) => (
-              <Chip
-                key={s.id}
-                label={s.name}
-                active={picked.includes(s.id)}
-                onClick={() => onToggle(s.id)}
-              />
-            ))}
-          </div>
-        </div>
-      )}
+    <div className="flex flex-wrap gap-2">
+      {branchStaff.map((s) => (
+        <Chip
+          key={s.id}
+          label={s.name}
+          active={picked.includes(s.id)}
+          onClick={() => onToggle(s.id)}
+        />
+      ))}
     </div>
   )
 }
