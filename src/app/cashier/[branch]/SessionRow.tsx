@@ -203,10 +203,42 @@ export function isSaveable(d: DraftRow): boolean {
 // Cell options
 // ---------------------------------------------------------------------------
 
-function buildStaffOptions(roster: StaffMember[]): ComboBoxOption[] {
-  return roster
-    .filter((s) => !s.isFreelance && s.isActive)
-    .map((s) => ({ value: s.name }))
+function buildStaffOptions(
+  roster: StaffMember[],
+  branch: Branch,
+): ComboBoxOption[] {
+  // Group A: home staff at this branch (top, sorted by name).
+  // Group B: staff from other branches (visiting / borrowed).
+  // Group C: freelancers (typically at the bottom; cashier picks
+  //          a freelancer when method is Freelance).
+  const home: ComboBoxOption[] = []
+  const other: ComboBoxOption[] = []
+  const free: ComboBoxOption[] = []
+  for (const s of roster) {
+    if (!s.isActive) continue
+    if (s.isFreelance) {
+      free.push({ value: s.name, group: 'Freelance' })
+      continue
+    }
+    if (s.homeBranch === branch) {
+      home.push({ value: s.name, group: `${branch} staff` })
+    } else {
+      // Annotate visiting staff with their home branch shortcode so
+      // the cashier can tell where they came from.
+      const code = s.homeBranch.slice(0, 3)
+      other.push({
+        value: s.name,
+        label: `${s.name} · ${code}`,
+        group: 'Other shop',
+      })
+    }
+  }
+  const byName = (a: ComboBoxOption, b: ComboBoxOption) =>
+    a.value.localeCompare(b.value)
+  home.sort(byName)
+  other.sort(byName)
+  free.sort(byName)
+  return [...home, ...other, ...free]
 }
 
 const COURSE_OPTIONS: ComboBoxOption[] = COURSES.map((c) => ({ value: c }))
@@ -363,7 +395,10 @@ function SessionRowImpl({
   onCommit,
   onDelete,
 }: SessionRowProps) {
-  const staffOptions = useMemo(() => buildStaffOptions(roster), [roster])
+  const staffOptions = useMemo(
+    () => buildStaffOptions(roster, branch),
+    [roster, branch],
+  )
 
   const staffIsFreelance = useMemo(() => {
     const lc = row.staff.trim().toLowerCase()

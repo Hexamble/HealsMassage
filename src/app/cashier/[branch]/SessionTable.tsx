@@ -154,14 +154,91 @@ export default function SessionTable() {
     removeOptimistic,
   } = ctx
 
+  // Local-storage scratchpad key for partial (unsaved) drafts. The
+  // user expects typing to persist across tab switches and page
+  // reloads even when a row is incomplete (no method, no payment yet).
+  // Saved rows always come from the DB so they're never on the
+  // scratchpad.
+  const draftStorageKey = `heals.draft.v1.${branch}.${businessDate}`
+
+  function loadStoredDrafts(): DraftRow[] | null {
+    if (typeof window === 'undefined') return null
+    try {
+      const raw = window.localStorage.getItem(draftStorageKey)
+      if (!raw) return null
+      const parsed = JSON.parse(raw)
+      if (!Array.isArray(parsed)) return null
+      return parsed as DraftRow[]
+    } catch {
+      return null
+    }
+  }
+
+  function saveStoredDrafts(drafts: DraftRow[]) {
+    if (typeof window === 'undefined') return
+    // Only persist drafts the cashier has actually typed something
+    // into AND that haven't been saved yet (no id).
+    const partial = drafts.filter(
+      (d) =>
+        !d.id &&
+        (d.staff.trim() !== '' ||
+          d.course.trim() !== '' ||
+          d.duration.trim() !== '' ||
+          d.method.trim() !== '' ||
+          d.timeIn.trim() !== '' ||
+          d.flags.trim() !== '' ||
+          d.comment.trim() !== '' ||
+          (d.cash && d.cash !== '0') ||
+          (d.qr && d.qr !== '0') ||
+          (d.credit && d.credit !== '0')),
+    )
+    try {
+      if (partial.length === 0) {
+        window.localStorage.removeItem(draftStorageKey)
+      } else {
+        window.localStorage.setItem(draftStorageKey, JSON.stringify(partial))
+      }
+    } catch {
+      // localStorage quota / disabled — silently degrade.
+    }
+  }
+
   // The number of "visible slots" — saved rows always show; we pad
   // up to this count with blanks. Cashiers extend with "Add 5".
   const [visibleRowCount, setVisibleRowCount] = useState(INITIAL_BLANK_ROWS)
 
   // Local drafts mirror persisted rows but allow edit-in-flight state.
-  const [drafts, setDrafts] = useState<DraftRow[]>(() =>
-    buildInitialDrafts(transactions, INITIAL_BLANK_ROWS),
-  )
+  const [drafts, setDrafts] = useState<DraftRow[]>(() => {
+    const stored = loadStoredDrafts()
+    if (stored && stored.length > 0) {
+      // Merge: stored partial drafts win for their slots, persisted
+      // rows from `transactions` fill the others.
+      const byNum = new Map<number, DraftRow>()
+      for (const d of stored) byNum.set(d.cashierRowNumber, d)
+      for (const r of transactions) {
+        if (!byNum.has(r.cashierRowNumber)) {
+          byNum.set(r.cashierRowNumber, rowToDraft(r))
+        }
+      }
+      const highest = Math.max(
+        transactions.reduce((acc, r) => Math.max(acc, r.cashierRowNumber), 0),
+        ...stored.map((d) => d.cashierRowNumber),
+      )
+      const target = Math.max(INITIAL_BLANK_ROWS, highest)
+      const list: DraftRow[] = []
+      for (let i = 1; i <= target; i++) {
+        list.push(byNum.get(i) ?? blankDraft(i))
+      }
+      return list
+    }
+    return buildInitialDrafts(transactions, INITIAL_BLANK_ROWS)
+  })
+
+  // Persist partial drafts whenever they change.
+  useEffect(() => {
+    saveStoredDrafts(drafts)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drafts, draftStorageKey])
 
   // Reconcile drafts with persisted state when the context updates
   // (post-server-save replacements, morning reset). We intentionally
