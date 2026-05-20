@@ -457,8 +457,19 @@ export default function SessionTable() {
   const onCommit = useCallback(
     (rowToSave: DraftRow) => {
       if (readOnly) return
-      if (!isSaveable(rowToSave)) return
-      void persistRow(rowToSave)
+      // The row passed here may be stale (from the previous render
+      // cycle). Read the latest draft from state to ensure we save
+      // the most up-to-date values including any field that was just
+      // changed via onChange in the same event loop.
+      setDrafts((currentDrafts) => {
+        const latest = currentDrafts.find(
+          (d) => d.cashierRowNumber === rowToSave.cashierRowNumber,
+        )
+        const toSave = latest ?? rowToSave
+        if (!isSaveable(toSave)) return currentDrafts
+        void persistRow(toSave)
+        return currentDrafts
+      })
     },
     [readOnly, persistRow],
   )
