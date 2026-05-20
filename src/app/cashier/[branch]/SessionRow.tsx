@@ -566,8 +566,6 @@ function SessionRowImpl({
     ? 'opacity-60'
     : row.saving
     ? 'opacity-80'
-    : row.saveError
-    ? 'bg-red-50 dark:bg-red-950/30'
     : rowIdx % 2 === 0
     ? 'bg-zinc-50/70 dark:bg-zinc-800/30'
     : ''
@@ -730,28 +728,33 @@ function SessionRowImpl({
         />
       </td>
       <td className="px-1 py-0 align-middle text-right">
+        {row.id && !row.saving && !readOnly && (
+          <span
+            aria-label="Saved"
+            title="Saved"
+            className="inline-block text-emerald-600 dark:text-emerald-400 font-bold text-sm leading-none"
+          >
+            ✓
+          </span>
+        )}
+        {row.saving && (
+          <span
+            className="inline-block text-zinc-400 text-sm leading-none"
+            title="Saving"
+            aria-label="Saving"
+          >
+            …
+          </span>
+        )}
         {row.id && !readOnly && (
           <button
             type="button"
             aria-label={`Delete row ${row.cashierRowNumber}`}
             onClick={() => onDelete(row)}
-            className="text-zinc-400 hover:text-red-600 px-1 py-0.5 text-sm"
+            className="ml-2 text-zinc-400 hover:text-red-600 px-1 py-0.5 text-sm"
           >
             ×
           </button>
-        )}
-        {row.saving && (
-          <span className="text-xs text-zinc-500" title="Saving">
-            …
-          </span>
-        )}
-        {row.saveError && (
-          <span
-            className="text-xs text-red-600"
-            title={row.saveError}
-          >
-            !
-          </span>
         )}
       </td>
     </tr>
