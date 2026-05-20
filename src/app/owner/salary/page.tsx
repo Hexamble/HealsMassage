@@ -1,91 +1,60 @@
-// heals-system-rebuild — Owner Salary Board (Task 14.1)
+// Boss HQ — Salary Board (Google Sheets edition)
 //
-// Spreadsheet-style grid showing each staff member's daily commission
-// and BALM bonus for the current pay cycle. Editable cells allow the
-// owner to override/backfill historical data via ownerSetDayCommission.
-//
-// Layout per the workbook:
-//   Row 1: day-of-week abbreviations (TUE, WED, ...)
-//   Row 2: day numbers (21, 22, ...)
-//   Per staff: commission row (bold name) + BALM row (lighter)
-//   Right columns: TOTAL, TOTAL+BALM
-//
-// Sections: Kimberry → Bishop → Chulia (per-branch grouping by home branch)
-//
-// Validates: Requirements 9.1–9.7, 18.2.
+// Shows each staff member's commission for the current pay cycle,
+// with EXTRA fallback logic and multi-branch summary.
+// Reads directly from the Cashier_POS Google Sheet.
 
-import { cycleDates } from '@/domain/cycle'
+import Link from 'next/link'
+
 import { getBusinessDate } from '@/domain/business-date'
-import {
-  BRANCHES,
-  type Branch,
-  type StaffMember,
-  type TransactionRow,
-} from '@/domain/types'
-import { createServerSupabaseClient } from '@/lib/supabase/server'
-import SalaryGrid, {
-  type BranchSectionData,
-  type StaffRow,
-  type StaffDayData,
-} from './SalaryGrid'
+import { cycleDates } from '@/domain/cycle'
+import { BRANCHES, type Branch } from '@/domain/types'
+import { fetchAllBranches } from '@/lib/sheets'
 
 export const dynamic = 'force-dynamic'
 
 // ---------------------------------------------------------------------------
-// Helpers
+// EXTRA logic
 // ---------------------------------------------------------------------------
 
-function n(v: unknown): number {
-  if (typeof v === 'number') return v
-  if (v == null) return 0
-  const x = Number(v)
-  return Number.isFinite(x) ? x : 0
+function isFreelance(method: string): boolean {
+  return method.trim().toLowerCase() === 'freelance'
 }
 
-function mapTx(r: Record<string, unknown>): TransactionRow {
-  return {
-    id: String(r.id ?? ''),
-    branch: String(r.branch) as Branch,
-    businessDate: String(r.business_date),
-    cashierRowNumber: n(r.cashier_row_number),
-    staff: String(r.staff ?? ''),
-    course: String(r.course) as TransactionRow['course'],
-    duration: n(r.duration) as TransactionRow['duration'],
-    timeIn: r.time_in == null ? null : String(r.time_in),
-    timeOut: r.time_out == null ? null : String(r.time_out),
-    method: String(r.method ?? ''),
-    addon: n(r.addon),
-    baseCommission: n(r.base_commission),
-    balmBonus: n(r.balm_bonus),
-    bookingBonus: n(r.booking_bonus),
-    totalCommission: n(r.total_commission),
-    cash: n(r.cash),
-    qr: n(r.qr),
-    credit: n(r.credit),
-    price: n(r.price),
-    flags: String(r.flags ?? ''),
-    comment: String(r.comment ?? ''),
-    createdAt: String(r.created_at ?? ''),
-    updatedAt: String(r.updated_at ?? ''),
-    createdBy: r.created_by == null ? null : String(r.created_by),
-  }
+function isExtraMethod(method: string): boolean {
+  const upper = method.trim().toUpperCase()
+  if (!upper.startsWith('EXTRA')) return false
+  if (upper.length === 5) return true
+  return !/[A-Z0-9]/.test(upper.charAt(5))
 }
 
-function mapStaff(r: Record<string, unknown>): StaffMember {
-  return {
-    id: String(r.id ?? ''),
-    name: String(r.name ?? ''),
-    homeBranch: String(r.home_branch) as Branch,
-    isFreelance: Boolean(r.is_freelance),
-    isActive: Boolean(r.is_active),
-  }
+function decodeExtraDest(method: string): Branch | null {
+  if (!isExtraMethod(method)) return null
+  const suffix = method.trim().toUpperCase().slice(5).replace(/^[\s\-_]+/, '')
+  if (suffix.startsWith('KIM') || suffix.startsWith('KM')) return 'Kimberry'
+  if (suffix.startsWith('BIS') || suffix.startsWith('BS')) return 'Bishop'
+  if (suffix.startsWith('CHU') || suffix.startsWith('CH') || suffix.startsWith('CL'))
+    return 'Chulia'
+  return null
 }
 
-const DAY_ABBREVS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
+function matchKey(staff: string, course: string, duration: number, branch: Branch): string {
+  return `${staff.trim().toLowerCase()}|${course.trim().toUpperCase()}|${Math.round(duration)}|${branch}`
+}
 
-function getDayOfWeek(dateStr: string): string {
-  const d = new Date(dateStr + 'T00:00:00Z')
-  return DAY_ABBREVS[d.getUTCDay()]
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface StaffSalaryRow {
+  name: string
+  total: number
+}
+
+interface BranchSection {
+  branch: Branch
+  staff: StaffSalaryRow[]
+  total: number
 }
 
 // ---------------------------------------------------------------------------
@@ -97,21 +66,12 @@ export default async function SalaryBoardPage({
 }: {
   searchParams: { monthIdx?: string; year?: string }
 }) {
-  const sb = createServerSupabaseClient()
-
-  // Load the configured pay-cycle start day (default 21).
-  const { data: setting } = await sb
-    .from('settings')
-    .select('value')
-    .eq('key', 'pay_cycle_start_day')
-    .maybeSingle()
-  const payCycleStartDay = Number(setting?.value ?? 21)
-
-  // Default to the cycle containing today.
   const today = getBusinessDate(new Date())
   const todayDate = new Date(today + 'T00:00:00Z')
   const fallbackMonth = todayDate.getUTCMonth()
   const fallbackYear = todayDate.getUTCFullYear()
+
+  const payCycleStartDay = 21
 
   const monthIdx = searchParams.monthIdx
     ? Math.max(0, Math.min(11, parseInt(searchParams.monthIdx, 10)))
@@ -122,126 +82,108 @@ export default async function SalaryBoardPage({
 
   const cycle = cycleDates(monthIdx, year, payCycleStartDay)
 
-  // Fetch transactions + staff roster in parallel.
-  const [txRes, staffRes] = await Promise.all([
-    sb
-      .from('transactions')
-      .select('*')
-      .gte('business_date', cycle.startDate)
-      .lte('business_date', cycle.endDate),
-    sb.from('staff').select('*'),
-  ])
-  const txns = ((txRes.data ?? []) as Record<string, unknown>[]).map(mapTx)
-  const roster = ((staffRes.data ?? []) as Record<string, unknown>[]).map(
-    mapStaff,
-  )
+  // Fetch all branches from Google Sheets
+  const allRows = await fetchAllBranches()
 
-  // Build roster lookup (active, non-freelance only for display).
-  const rosterByName = new Map<string, StaffMember>()
-  for (const s of roster) {
-    rosterByName.set(s.name.trim().toLowerCase(), s)
+  // Filter to cycle days — since the sheet only has today's data,
+  // we use all rows (the sheet represents the current day's transactions).
+  // For a full cycle view we'd need historical data, but the sheet is live.
+  const cycleDaysSet = new Set(cycle.days)
+  const cycleRows = allRows.filter((r) => cycleDaysSet.has(r.businessDate))
+
+  // Build canonical salary view with EXTRA fallback
+  // Pass 1: collect real-row match keys
+  const realKeys = new Set<string>()
+  for (const r of cycleRows) {
+    if (isFreelance(r.method)) continue
+    if (decodeExtraDest(r.method) !== null) continue
+    realKeys.add(matchKey(r.staff, r.course, r.duration, r.branch))
   }
 
-  // Group transactions by staff+date. For each staff+date we track:
-  //   - sum of totalCommission (the daily commission cell)
-  //   - sum of balmBonus (the BALM cell)
-  //   - first transaction ID (for the edit action — edits the first tx of the day)
-  type DayBucket = { commission: number; balm: number; txId: string }
-  // staffLc → date → bucket
-  const staffDays = new Map<string, Map<string, DayBucket>>()
-  // staffLc → display name
+  // Pass 2: attribute commissions
+  // staffLc → branch → total
+  const staffBranchTotals = new Map<string, Map<Branch, number>>()
   const staffDisplayNames = new Map<string, string>()
 
-  // Filter out freelance rows
-  for (const tx of txns) {
-    if (tx.method.trim().toLowerCase() === 'freelance') continue
+  for (const r of cycleRows) {
+    if (isFreelance(r.method)) continue
+    if (!r.staff.trim()) continue
 
-    const staffLc = tx.staff.trim().toLowerCase()
-    if (!staffLc) continue
-
+    const staffLc = r.staff.trim().toLowerCase()
     if (!staffDisplayNames.has(staffLc)) {
-      staffDisplayNames.set(staffLc, tx.staff.trim())
+      staffDisplayNames.set(staffLc, r.staff.trim())
     }
 
-    let dayMap = staffDays.get(staffLc)
-    if (!dayMap) {
-      dayMap = new Map()
-      staffDays.set(staffLc, dayMap)
+    let attribBranch: Branch = r.branch
+
+    const dest = decodeExtraDest(r.method)
+    if (dest !== null) {
+      // Check if covered by a real row at destination
+      const k = matchKey(r.staff, r.course, r.duration, dest)
+      if (realKeys.has(k)) continue // covered — skip
+      attribBranch = dest // fallback to destination
+    } else if (isExtraMethod(r.method)) {
+      // Undecodable EXTRA — skip
+      continue
     }
 
-    const existing = dayMap.get(tx.businessDate)
-    if (existing) {
-      existing.commission += n(tx.totalCommission)
-      existing.balm += n(tx.balmBonus)
-    } else {
-      dayMap.set(tx.businessDate, {
-        commission: n(tx.totalCommission),
-        balm: n(tx.balmBonus),
-        txId: tx.id,
-      })
+    let branchMap = staffBranchTotals.get(staffLc)
+    if (!branchMap) {
+      branchMap = new Map()
+      staffBranchTotals.set(staffLc, branchMap)
     }
+    branchMap.set(attribBranch, (branchMap.get(attribBranch) ?? 0) + r.commission)
   }
 
-  // Build per-branch sections: group staff by home branch.
-  const sections: BranchSectionData[] = []
-
+  // Build per-branch sections
+  const sections: BranchSection[] = []
   for (const branch of BRANCHES) {
-    const branchStaff: StaffRow[] = []
-
-    for (const [staffLc, dayMap] of Array.from(staffDays)) {
-      const rosterEntry = rosterByName.get(staffLc)
-      if (!rosterEntry) continue
-      if (rosterEntry.isFreelance) continue
-      if (!rosterEntry.isActive) continue
-      if (rosterEntry.homeBranch !== branch) continue
-
-      const days: Record<string, StaffDayData> = {}
-      let totalCommission = 0
-      let totalBalm = 0
-
-      for (const [date, bucket] of Array.from(dayMap)) {
-        days[date] = {
-          txId: bucket.txId,
-          commission: Math.round(bucket.commission * 100) / 100,
-          balm: Math.round(bucket.balm * 100) / 100,
-        }
-        totalCommission += bucket.commission
-        totalBalm += bucket.balm
-      }
-
-      branchStaff.push({
-        name: staffDisplayNames.get(staffLc) ?? rosterEntry.name,
-        days,
-        totalCommission: Math.round(totalCommission * 100) / 100,
-        totalBalm: Math.round(totalBalm * 100) / 100,
+    const staff: StaffSalaryRow[] = []
+    for (const [staffLc, branchMap] of Array.from(staffBranchTotals)) {
+      const total = branchMap.get(branch) ?? 0
+      if (total === 0) continue
+      staff.push({
+        name: staffDisplayNames.get(staffLc) ?? staffLc,
+        total: Math.round(total * 100) / 100,
       })
     }
-
-    // Sort by total descending, then name ascending.
-    branchStaff.sort(
-      (a, b) => b.totalCommission - a.totalCommission || a.name.localeCompare(b.name),
-    )
-
-    if (branchStaff.length > 0) {
-      sections.push({ branch, staff: branchStaff })
+    staff.sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
+    if (staff.length > 0) {
+      sections.push({
+        branch,
+        staff,
+        total: staff.reduce((s, r) => s + r.total, 0),
+      })
     }
   }
 
-  // Build day headers from cycle.days.
-  const dayHeaders = cycle.days.map((d) => ({
-    date: d,
-    dayOfWeek: getDayOfWeek(d),
-    dayNum: String(parseInt(d.slice(8), 10)), // strip leading zero
-  }))
+  // Multi-branch summary: staff with totals at ≥2 branches
+  const multiBranch: StaffSalaryRow[] = []
+  for (const [staffLc, branchMap] of Array.from(staffBranchTotals)) {
+    const nonZeroBranches = Array.from(branchMap.values()).filter((v) => v > 0)
+    if (nonZeroBranches.length < 2) continue
+    const total = nonZeroBranches.reduce((s, v) => s + v, 0)
+    multiBranch.push({
+      name: staffDisplayNames.get(staffLc) ?? staffLc,
+      total: Math.round(total * 100) / 100,
+    })
+  }
+  multiBranch.sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
 
-  // Prev/next cycle navigation.
+  // Navigation
   const prevMonthIdx = monthIdx === 0 ? 11 : monthIdx - 1
   const prevYear = monthIdx === 0 ? year - 1 : year
   const nextMonthIdx = monthIdx === 11 ? 0 : monthIdx + 1
   const nextYear = monthIdx === 11 ? year + 1 : year
 
+  const now = new Date().toLocaleString('en-GB', {
+    timeZone: 'Asia/Kuala_Lumpur',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  })
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Salary Board</h1>
@@ -250,24 +192,125 @@ export default async function SalaryBoardPage({
             <span className="font-mono">{cycle.endDate}</span> · Day{' '}
             {payCycleStartDay} start
           </p>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
+            Last refreshed: {now} ·{' '}
+            <Link
+              href={`/owner/salary?monthIdx=${monthIdx}&year=${year}`}
+              className="underline hover:text-zinc-700 dark:hover:text-zinc-300"
+            >
+              ⟳ Refresh
+            </Link>
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <a
             href={`?monthIdx=${prevMonthIdx}&year=${prevYear}`}
-            className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
+            className="rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
           >
             ← Prev
           </a>
           <a
             href={`?monthIdx=${nextMonthIdx}&year=${nextYear}`}
-            className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
+            className="rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
           >
             Next →
           </a>
         </div>
       </header>
 
-      <SalaryGrid sections={sections} dayHeaders={dayHeaders} today={today} />
+      {sections.length === 0 && multiBranch.length === 0 ? (
+        <p className="text-sm text-zinc-500 italic">
+          No salary data for this cycle yet.
+        </p>
+      ) : (
+        <>
+          {sections.map((sec) => (
+            <SectionTable key={sec.branch} section={sec} />
+          ))}
+
+          {multiBranch.length > 0 && (
+            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+              <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800">
+                <h2 className="text-sm font-semibold uppercase tracking-wide">
+                  Multi-Branch Summary
+                </h2>
+              </div>
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-100 dark:border-zinc-800 text-xs uppercase text-zinc-500">
+                    <th className="px-4 py-2 text-left">Staff</th>
+                    <th className="px-4 py-2 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {multiBranch.map((s) => (
+                    <tr
+                      key={s.name}
+                      className="border-b border-zinc-50 dark:border-zinc-800"
+                    >
+                      <td className="px-4 py-2 font-medium">{s.name}</td>
+                      <td className="px-4 py-2 text-right tabular-nums font-semibold">
+                        {s.total.toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-zinc-50 dark:bg-zinc-800 font-semibold">
+                    <td className="px-4 py-2">Total</td>
+                    <td className="px-4 py-2 text-right tabular-nums">
+                      {multiBranch
+                        .reduce((s, r) => s + r.total, 0)
+                        .toFixed(2)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function SectionTable({ section }: { section: BranchSection }) {
+  return (
+    <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+      <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800">
+        <h2 className="text-sm font-semibold uppercase tracking-wide">
+          {section.branch}
+        </h2>
+      </div>
+      <table className="min-w-full text-sm">
+        <thead>
+          <tr className="border-b border-zinc-100 dark:border-zinc-800 text-xs uppercase text-zinc-500">
+            <th className="px-4 py-2 text-left">Staff</th>
+            <th className="px-4 py-2 text-right">Commission</th>
+          </tr>
+        </thead>
+        <tbody>
+          {section.staff.map((s) => (
+            <tr
+              key={s.name}
+              className="border-b border-zinc-50 dark:border-zinc-800"
+            >
+              <td className="px-4 py-2 font-medium">{s.name}</td>
+              <td className="px-4 py-2 text-right tabular-nums">
+                {s.total.toFixed(2)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="bg-zinc-50 dark:bg-zinc-800 font-semibold">
+            <td className="px-4 py-2">Total</td>
+            <td className="px-4 py-2 text-right tabular-nums">
+              {section.total.toFixed(2)}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
     </div>
   )
 }
