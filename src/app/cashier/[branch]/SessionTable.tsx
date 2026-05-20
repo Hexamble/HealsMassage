@@ -9,7 +9,7 @@
  * Fetches fresh data on load and on window focus via context.
  */
 
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 
 import { buildRowId } from '@/domain/row-id'
 import {
@@ -163,9 +163,6 @@ export default function SessionTable() {
     buildInitialRows(transactions, INITIAL_ROWS),
   )
 
-  // Track which row the user is currently editing
-  const activeRowRef = useRef<number | null>(null)
-
   // --- Row update helper (always reads latest from state) ---
   function updateRow(rowNum: number, updater: (prev: DraftRow) => DraftRow) {
     setRows((prev) =>
@@ -223,22 +220,6 @@ export default function SessionTable() {
       }
       return current
     })
-  }
-
-  // --- Focus handler: save previous row on row change ---
-  function handleCellFocus(rowNum: number) {
-    const prev = activeRowRef.current
-    if (prev !== null && prev !== rowNum) {
-      // Read latest state for the previous row and save if needed
-      setRows((current) => {
-        const prevRow = current.find((r) => r.cashierRowNumber === prev)
-        if (prevRow && isSaveable(prevRow) && prevRow.id === '') {
-          void saveRow(prevRow)
-        }
-        return current
-      })
-    }
-    activeRowRef.current = rowNum
   }
 
   // --- Delete handler ---
@@ -399,7 +380,6 @@ export default function SessionTable() {
                 <tr
                   key={rn}
                   className={`border-b border-zinc-100 dark:border-zinc-800 ${rowBg}`}
-                  onFocus={() => handleCellFocus(rn)}
                 >
                   {/* Row number */}
                   <td className="px-1 py-0.5 text-[10px] text-zinc-500 text-right tabular-nums align-middle">
